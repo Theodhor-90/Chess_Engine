@@ -563,6 +563,129 @@ impl Position {
         self.occupied = self.occupied_by[0] | self.occupied_by[1];
     }
 
+    /// Returns `true` if `square` is attacked by any piece of `by_side`.
+    pub fn is_square_attacked(&self, square: Square, by_side: Color) -> bool {
+        let sq_idx = square.index() as i8;
+        let sq_file = sq_idx % 8;
+        let sq_rank = sq_idx / 8;
+
+        // 1. Pawn attacks
+        let pawn = Piece::new(by_side, PieceKind::Pawn);
+        let pawn_bb = self.piece_bb[pawn.index()];
+        let pawn_offsets: [(i8, i8); 2] = if by_side == Color::White {
+            [(-1, -1), (1, -1)] // White pawns attack upward; reverse to find source squares
+        } else {
+            [(-1, 1), (1, 1)] // Black pawns attack downward; reverse to find source squares
+        };
+        for (df, dr) in pawn_offsets {
+            let f = sq_file + df;
+            let r = sq_rank + dr;
+            if (0..8).contains(&f) && (0..8).contains(&r) {
+                let idx = (r * 8 + f) as u8;
+                let bit = Bitboard::new(1u64 << idx);
+                if !(pawn_bb & bit).is_empty() {
+                    return true;
+                }
+            }
+        }
+
+        // 2. Knight attacks
+        let knight = Piece::new(by_side, PieceKind::Knight);
+        let knight_bb = self.piece_bb[knight.index()];
+        const KNIGHT_OFFSETS: [(i8, i8); 8] = [
+            (2, 1),
+            (2, -1),
+            (-2, 1),
+            (-2, -1),
+            (1, 2),
+            (1, -2),
+            (-1, 2),
+            (-1, -2),
+        ];
+        for (df, dr) in KNIGHT_OFFSETS {
+            let f = sq_file + df;
+            let r = sq_rank + dr;
+            if (0..8).contains(&f) && (0..8).contains(&r) {
+                let idx = (r * 8 + f) as u8;
+                let bit = Bitboard::new(1u64 << idx);
+                if !(knight_bb & bit).is_empty() {
+                    return true;
+                }
+            }
+        }
+
+        // 3. Bishop/Queen attacks (diagonal rays)
+        let bishop = Piece::new(by_side, PieceKind::Bishop);
+        let queen = Piece::new(by_side, PieceKind::Queen);
+        let bishop_bb = self.piece_bb[bishop.index()];
+        let queen_bb = self.piece_bb[queen.index()];
+        const DIAG_DIRS: [(i8, i8); 4] = [(1, 1), (1, -1), (-1, 1), (-1, -1)];
+        for (df, dr) in DIAG_DIRS {
+            let mut f = sq_file + df;
+            let mut r = sq_rank + dr;
+            while (0..8).contains(&f) && (0..8).contains(&r) {
+                let idx = (r * 8 + f) as u8;
+                let bit = Bitboard::new(1u64 << idx);
+                if !(self.occupied & bit).is_empty() {
+                    if !(bishop_bb & bit).is_empty() || !(queen_bb & bit).is_empty() {
+                        return true;
+                    }
+                    break;
+                }
+                f += df;
+                r += dr;
+            }
+        }
+
+        // 4. Rook/Queen attacks (orthogonal rays)
+        let rook = Piece::new(by_side, PieceKind::Rook);
+        let rook_bb = self.piece_bb[rook.index()];
+        const ORTHO_DIRS: [(i8, i8); 4] = [(1, 0), (-1, 0), (0, 1), (0, -1)];
+        for (df, dr) in ORTHO_DIRS {
+            let mut f = sq_file + df;
+            let mut r = sq_rank + dr;
+            while (0..8).contains(&f) && (0..8).contains(&r) {
+                let idx = (r * 8 + f) as u8;
+                let bit = Bitboard::new(1u64 << idx);
+                if !(self.occupied & bit).is_empty() {
+                    if !(rook_bb & bit).is_empty() || !(queen_bb & bit).is_empty() {
+                        return true;
+                    }
+                    break;
+                }
+                f += df;
+                r += dr;
+            }
+        }
+
+        // 5. King attacks
+        let king = Piece::new(by_side, PieceKind::King);
+        let king_bb = self.piece_bb[king.index()];
+        const KING_OFFSETS: [(i8, i8); 8] = [
+            (1, 0),
+            (-1, 0),
+            (0, 1),
+            (0, -1),
+            (1, 1),
+            (1, -1),
+            (-1, 1),
+            (-1, -1),
+        ];
+        for (df, dr) in KING_OFFSETS {
+            let f = sq_file + df;
+            let r = sq_rank + dr;
+            if (0..8).contains(&f) && (0..8).contains(&r) {
+                let idx = (r * 8 + f) as u8;
+                let bit = Bitboard::new(1u64 << idx);
+                if !(king_bb & bit).is_empty() {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
     pub(crate) fn piece_bb_mut(&mut self, piece: Piece) -> &mut Bitboard {
         &mut self.piece_bb[piece.index()]
     }
@@ -1335,5 +1458,161 @@ mod tests {
         assert_eq!(pos.halfmove_clock(), 0);
         assert_eq!(pos.en_passant(), None);
         assert_eq!(pos.castling_rights(), CastlingRights::ALL);
+    }
+
+    // ── is_square_attacked tests ─────────────────────────────────────
+
+    #[test]
+    fn is_square_attacked_pawn_white() {
+        // White pawn on d4, both kings present
+        let pos = Position::from_fen("4k3/8/8/8/3P4/8/8/4K3 w - - 0 1").unwrap();
+        assert!(pos.is_square_attacked(Square::E5, Color::White));
+        assert!(pos.is_square_attacked(Square::C5, Color::White));
+        assert!(!pos.is_square_attacked(Square::D5, Color::White));
+        assert!(!pos.is_square_attacked(Square::D3, Color::White));
+        assert!(!pos.is_square_attacked(Square::E4, Color::White));
+    }
+
+    #[test]
+    fn is_square_attacked_pawn_black() {
+        // Black pawn on e5
+        let pos = Position::from_fen("4k3/8/8/4p3/8/8/8/4K3 w - - 0 1").unwrap();
+        assert!(pos.is_square_attacked(Square::D4, Color::Black));
+        assert!(pos.is_square_attacked(Square::F4, Color::Black));
+        assert!(!pos.is_square_attacked(Square::E4, Color::Black));
+        assert!(!pos.is_square_attacked(Square::E6, Color::Black));
+        assert!(!pos.is_square_attacked(Square::D5, Color::Black));
+    }
+
+    #[test]
+    fn is_square_attacked_pawn_edge_file() {
+        // White pawn on a4, black pawn on h5
+        let pos = Position::from_fen("4k3/8/8/7p/P7/8/8/4K3 w - - 0 1").unwrap();
+        assert!(pos.is_square_attacked(Square::B5, Color::White));
+        assert!(!pos.is_square_attacked(Square::H5, Color::White)); // no wrap
+        assert!(pos.is_square_attacked(Square::G4, Color::Black));
+        assert!(!pos.is_square_attacked(Square::A4, Color::Black)); // no wrap
+    }
+
+    #[test]
+    fn is_square_attacked_knight() {
+        // White knight on d4
+        let pos = Position::from_fen("4k3/8/8/8/3N4/8/8/4K3 w - - 0 1").unwrap();
+        assert!(pos.is_square_attacked(Square::C2, Color::White));
+        assert!(pos.is_square_attacked(Square::E2, Color::White));
+        assert!(pos.is_square_attacked(Square::B3, Color::White));
+        assert!(pos.is_square_attacked(Square::F3, Color::White));
+        assert!(pos.is_square_attacked(Square::B5, Color::White));
+        assert!(pos.is_square_attacked(Square::F5, Color::White));
+        assert!(pos.is_square_attacked(Square::C6, Color::White));
+        assert!(pos.is_square_attacked(Square::E6, Color::White));
+        assert!(!pos.is_square_attacked(Square::D5, Color::White));
+        assert!(!pos.is_square_attacked(Square::D3, Color::White));
+        assert!(!pos.is_square_attacked(Square::E4, Color::White));
+    }
+
+    #[test]
+    fn is_square_attacked_knight_corner() {
+        // White knight on a1
+        let pos = Position::from_fen("4k3/8/8/8/8/8/8/N3K3 w - - 0 1").unwrap();
+        assert!(pos.is_square_attacked(Square::B3, Color::White));
+        assert!(pos.is_square_attacked(Square::C2, Color::White));
+        assert!(!pos.is_square_attacked(Square::A3, Color::White));
+        assert!(!pos.is_square_attacked(Square::C1, Color::White));
+    }
+
+    #[test]
+    fn is_square_attacked_bishop_unblocked() {
+        // White bishop on d4, kings elsewhere
+        let pos = Position::from_fen("4k3/8/8/8/3B4/8/8/4K3 w - - 0 1").unwrap();
+        assert!(pos.is_square_attacked(Square::A1, Color::White));
+        assert!(pos.is_square_attacked(Square::B2, Color::White));
+        assert!(pos.is_square_attacked(Square::C3, Color::White));
+        assert!(pos.is_square_attacked(Square::E5, Color::White));
+        assert!(pos.is_square_attacked(Square::F6, Color::White));
+        assert!(pos.is_square_attacked(Square::G7, Color::White));
+        assert!(pos.is_square_attacked(Square::H8, Color::White));
+        assert!(pos.is_square_attacked(Square::A7, Color::White));
+        assert!(pos.is_square_attacked(Square::G1, Color::White));
+    }
+
+    #[test]
+    fn is_square_attacked_bishop_blocked() {
+        // White bishop on d4, black rook on f6 blocking the diagonal
+        let pos = Position::from_fen("4k3/8/5r2/8/3B4/8/8/4K3 w - - 0 1").unwrap();
+        assert!(pos.is_square_attacked(Square::E5, Color::White));
+        assert!(pos.is_square_attacked(Square::F6, Color::White)); // bishop attacks up to and including the blocker
+        assert!(!pos.is_square_attacked(Square::G7, Color::White));
+        assert!(!pos.is_square_attacked(Square::H8, Color::White));
+    }
+
+    #[test]
+    fn is_square_attacked_rook_unblocked() {
+        // White rook on d4, kings elsewhere
+        let pos = Position::from_fen("4k3/8/8/8/3R4/8/8/4K3 w - - 0 1").unwrap();
+        assert!(pos.is_square_attacked(Square::D1, Color::White));
+        assert!(pos.is_square_attacked(Square::D8, Color::White));
+        assert!(pos.is_square_attacked(Square::A4, Color::White));
+        assert!(pos.is_square_attacked(Square::H4, Color::White));
+    }
+
+    #[test]
+    fn is_square_attacked_rook_blocked() {
+        // White rook on a1, white pawn on a3 blocking the file
+        let pos = Position::from_fen("4k3/8/8/8/8/P7/8/R3K3 w - - 0 1").unwrap();
+        assert!(pos.is_square_attacked(Square::A2, Color::White));
+        assert!(!pos.is_square_attacked(Square::A4, Color::White));
+        assert!(!pos.is_square_attacked(Square::A5, Color::White));
+        assert!(!pos.is_square_attacked(Square::A8, Color::White));
+    }
+
+    #[test]
+    fn is_square_attacked_queen() {
+        // White queen on d4
+        let pos = Position::from_fen("4k3/8/8/8/3Q4/8/8/4K3 w - - 0 1").unwrap();
+        // Diagonal
+        assert!(pos.is_square_attacked(Square::F6, Color::White));
+        assert!(pos.is_square_attacked(Square::A1, Color::White));
+        // Orthogonal
+        assert!(pos.is_square_attacked(Square::D8, Color::White));
+        assert!(pos.is_square_attacked(Square::H4, Color::White));
+    }
+
+    #[test]
+    fn is_square_attacked_king() {
+        // White king on e1 (startpos-like, only kings)
+        let pos = Position::from_fen("4k3/8/8/8/8/8/8/4K3 w - - 0 1").unwrap();
+        assert!(pos.is_square_attacked(Square::D1, Color::White));
+        assert!(pos.is_square_attacked(Square::D2, Color::White));
+        assert!(pos.is_square_attacked(Square::E2, Color::White));
+        assert!(pos.is_square_attacked(Square::F2, Color::White));
+        assert!(pos.is_square_attacked(Square::F1, Color::White));
+        assert!(!pos.is_square_attacked(Square::E3, Color::White));
+        assert!(!pos.is_square_attacked(Square::E4, Color::White));
+    }
+
+    #[test]
+    fn is_square_attacked_king_corner() {
+        // White king on a1
+        let pos = Position::from_fen("4k3/8/8/8/8/8/8/K7 w - - 0 1").unwrap();
+        assert!(pos.is_square_attacked(Square::A2, Color::White));
+        assert!(pos.is_square_attacked(Square::B1, Color::White));
+        assert!(pos.is_square_attacked(Square::B2, Color::White));
+        assert!(!pos.is_square_attacked(Square::C1, Color::White));
+        assert!(!pos.is_square_attacked(Square::A3, Color::White));
+    }
+
+    #[test]
+    fn is_square_attacked_no_attackers() {
+        // Only kings, check a random square
+        let pos = Position::from_fen("4k3/8/8/8/8/8/8/4K3 w - - 0 1").unwrap();
+        assert!(!pos.is_square_attacked(Square::A8, Color::White));
+        assert!(!pos.is_square_attacked(Square::H1, Color::Black));
+    }
+
+    #[test]
+    fn is_square_attacked_multiple_attackers() {
+        let pos = Position::from_fen("4k3/8/8/8/3QN3/8/8/4K3 w - - 0 1").unwrap();
+        assert!(pos.is_square_attacked(Square::F6, Color::White));
     }
 }
