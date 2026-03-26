@@ -1,0 +1,5 @@
+- **`Cargo.toml` (workspace root)** — added `"crates/movegen"` to workspace members
+- **`crates/movegen/Cargo.toml`** — new crate manifest with dependencies on `chess-types` and `chess-board`
+- **`crates/movegen/src/lib.rs`** — declares `pub mod pawns` and re-exports `generate_pawn_moves`
+- **`crates/movegen/src/pawns.rs`** — implements `generate_pawn_moves` for white/black with single push, double push, captures, en passant, promotions, and capture-promotions; includes 19 colocated unit tests
+- **`crates/types/src/bitboard.rs`** — made `Bitboard::new` a `const fn` (required for file-private rank/file mask constants in pawns.rs)
