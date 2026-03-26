@@ -1,0 +1,4 @@
+- **`crates/types/src/color.rs`** — Created. `Color` enum with `White=0`/`Black=1` discriminants, `opposite()`, `TryFrom<u8>`, `Display`, 5 unit tests.
+- **`crates/types/src/piece.rs`** — Created. `PieceKind` enum (6 variants, `TryFrom<u8>`), `Piece` struct with `new()`, `index()` (flat 0..11), `from_index()`, `Display` (upper/lowercase), 6 unit tests.
+- **`crates/types/src/square.rs`** — Created. `File` enum (A–H), `Rank` enum (R1–R8), `Square` newtype with LERF mapping, all 64 named constants, `new()`, `index()`, `file()`, `rank()`, `from_file_rank()`, `From` trait impls, `Display`, 10 unit tests.
+- **`crates/types/src/lib.rs`** — Modified. Added `color`, `piece`, `square` module declarations and re-exports for `Color`, `Piece`, `PieceKind`, `File`, `Rank`, `Square`.
