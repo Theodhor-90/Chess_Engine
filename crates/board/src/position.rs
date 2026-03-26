@@ -437,6 +437,132 @@ impl Position {
         undo
     }
 
+    /// Restores the position to its exact state before the corresponding `make_move` call.
+    pub fn unmake_move(&mut self, mv: Move, undo: UndoInfo) {
+        // 1. Toggle side to move back
+        self.side_to_move = self.side_to_move.opposite();
+        let us = self.side_to_move;
+        let them = us.opposite();
+
+        // 2. Extract move info
+        let from = mv.from_sq();
+        let to = mv.to_sq();
+        let flags = mv.flags();
+
+        let from_bb = Bitboard::new(1u64 << from.index());
+        let to_bb = Bitboard::new(1u64 << to.index());
+
+        // 3. Handle by move type
+        match flags {
+            MoveFlag::QUIET => {
+                let piece = self.piece_on(to).expect("no piece on destination square");
+                *self.piece_bb_mut(piece) ^= from_bb | to_bb;
+                *self.occupied_by_mut(us) ^= from_bb | to_bb;
+            }
+            MoveFlag::CAPTURE => {
+                let piece = self.piece_on(to).expect("no piece on destination square");
+                *self.piece_bb_mut(piece) ^= from_bb | to_bb;
+                *self.occupied_by_mut(us) ^= from_bb | to_bb;
+                let captured = undo.captured.expect("capture move without captured piece");
+                *self.piece_bb_mut(captured) ^= to_bb;
+                *self.occupied_by_mut(them) ^= to_bb;
+            }
+            MoveFlag::DOUBLE_PAWN_PUSH => {
+                let piece = self.piece_on(to).expect("no piece on destination square");
+                *self.piece_bb_mut(piece) ^= from_bb | to_bb;
+                *self.occupied_by_mut(us) ^= from_bb | to_bb;
+            }
+            MoveFlag::KING_CASTLE => {
+                // Move king back
+                let king = self.piece_on(to).expect("no king on destination square");
+                *self.piece_bb_mut(king) ^= from_bb | to_bb;
+                *self.occupied_by_mut(us) ^= from_bb | to_bb;
+                // Move rook back
+                let rook = Piece::new(us, PieceKind::Rook);
+                let (rook_from, rook_to) = if us == Color::White {
+                    (Square::H1, Square::F1)
+                } else {
+                    (Square::H8, Square::F8)
+                };
+                let rook_from_bb = Bitboard::new(1u64 << rook_from.index());
+                let rook_to_bb = Bitboard::new(1u64 << rook_to.index());
+                *self.piece_bb_mut(rook) ^= rook_from_bb | rook_to_bb;
+                *self.occupied_by_mut(us) ^= rook_from_bb | rook_to_bb;
+            }
+            MoveFlag::QUEEN_CASTLE => {
+                // Move king back
+                let king = self.piece_on(to).expect("no king on destination square");
+                *self.piece_bb_mut(king) ^= from_bb | to_bb;
+                *self.occupied_by_mut(us) ^= from_bb | to_bb;
+                // Move rook back
+                let rook = Piece::new(us, PieceKind::Rook);
+                let (rook_from, rook_to) = if us == Color::White {
+                    (Square::A1, Square::D1)
+                } else {
+                    (Square::A8, Square::D8)
+                };
+                let rook_from_bb = Bitboard::new(1u64 << rook_from.index());
+                let rook_to_bb = Bitboard::new(1u64 << rook_to.index());
+                *self.piece_bb_mut(rook) ^= rook_from_bb | rook_to_bb;
+                *self.occupied_by_mut(us) ^= rook_from_bb | rook_to_bb;
+            }
+            MoveFlag::EN_PASSANT => {
+                let piece = self.piece_on(to).expect("no piece on destination square");
+                *self.piece_bb_mut(piece) ^= from_bb | to_bb;
+                *self.occupied_by_mut(us) ^= from_bb | to_bb;
+                // Restore captured pawn
+                let cap_idx = if us == Color::White {
+                    to.index() - 8
+                } else {
+                    to.index() + 8
+                };
+                let cap_sq = Square::new(cap_idx).expect("invalid en passant capture square");
+                let cap_bb = Bitboard::new(1u64 << cap_sq.index());
+                let captured = undo.captured.expect("en passant without captured piece");
+                *self.piece_bb_mut(captured) ^= cap_bb;
+                *self.occupied_by_mut(them) ^= cap_bb;
+            }
+            _ => {
+                // Promotions and promotion-captures
+                let promo_kind = mv
+                    .promotion_piece()
+                    .expect("promotion flag without promotion piece");
+                let promoted = Piece::new(us, promo_kind);
+                let pawn = Piece::new(us, PieceKind::Pawn);
+                // Remove promoted piece from destination
+                *self.piece_bb_mut(promoted) ^= to_bb;
+                *self.occupied_by_mut(us) ^= to_bb;
+                // Place pawn back on source
+                *self.piece_bb_mut(pawn) ^= from_bb;
+                *self.occupied_by_mut(us) ^= from_bb;
+                // Restore captured piece if promotion-capture
+                if mv.is_capture() {
+                    let captured = undo
+                        .captured
+                        .expect("promotion-capture without captured piece");
+                    *self.piece_bb_mut(captured) ^= to_bb;
+                    *self.occupied_by_mut(them) ^= to_bb;
+                }
+            }
+        }
+
+        // 4. Update fullmove counter
+        if us == Color::Black {
+            self.fullmove_counter -= 1;
+        }
+
+        // 5. Restore saved state from UndoInfo
+        self.set_castling_rights(undo.castling_rights);
+        self.set_en_passant(undo.en_passant);
+        self.set_halfmove_clock(undo.halfmove_clock);
+
+        // 6. Restore Zobrist hash
+        self.set_hash(undo.hash);
+
+        // 7. Recompute total occupancy
+        self.occupied = self.occupied_by[0] | self.occupied_by[1];
+    }
+
     pub(crate) fn piece_bb_mut(&mut self, piece: Piece) -> &mut Bitboard {
         &mut self.piece_bb[piece.index()]
     }
@@ -455,17 +581,14 @@ impl Position {
         self.side_to_move = color;
     }
 
-    #[allow(dead_code)]
     pub(crate) fn set_castling_rights(&mut self, rights: CastlingRights) {
         self.castling_rights = rights;
     }
 
-    #[allow(dead_code)]
     pub(crate) fn set_en_passant(&mut self, sq: Option<Square>) {
         self.en_passant = sq;
     }
 
-    #[allow(dead_code)]
     pub(crate) fn set_halfmove_clock(&mut self, clock: u8) {
         self.halfmove_clock = clock;
     }
@@ -939,5 +1062,278 @@ mod tests {
 
         assert_eq!(pos.en_passant(), None);
         assert_hash_matches_recomputation(&pos);
+    }
+
+    fn assert_round_trip(pos: &mut Position, mv: Move) {
+        let original_fen = pos.to_fen();
+        let original_hash = pos.hash();
+        let original_side = pos.side_to_move();
+        let original_castling = pos.castling_rights();
+        let original_ep = pos.en_passant();
+        let original_halfmove = pos.halfmove_clock();
+        let original_fullmove = pos.fullmove_counter();
+        let original_occupied = pos.occupied();
+        let original_white_occ = pos.occupied_by(Color::White);
+        let original_black_occ = pos.occupied_by(Color::Black);
+
+        let undo = pos.make_move(mv);
+        pos.unmake_move(mv, undo);
+
+        assert_eq!(pos.to_fen(), original_fen, "FEN mismatch after round-trip");
+        assert_eq!(pos.hash(), original_hash, "hash mismatch after round-trip");
+        assert_eq!(pos.side_to_move(), original_side);
+        assert_eq!(pos.castling_rights(), original_castling);
+        assert_eq!(pos.en_passant(), original_ep);
+        assert_eq!(pos.halfmove_clock(), original_halfmove);
+        assert_eq!(pos.fullmove_counter(), original_fullmove);
+        assert_eq!(pos.occupied(), original_occupied);
+        assert_eq!(pos.occupied_by(Color::White), original_white_occ);
+        assert_eq!(pos.occupied_by(Color::Black), original_black_occ);
+    }
+
+    #[test]
+    fn unmake_quiet() {
+        let mut pos = Position::startpos();
+        let mv = Move::new(Square::G1, Square::F3, MoveFlag::QUIET);
+        assert_round_trip(&mut pos, mv);
+        assert_eq!(
+            pos.piece_on(Square::G1),
+            Some(Piece::new(Color::White, PieceKind::Knight))
+        );
+        assert_eq!(pos.piece_on(Square::F3), None);
+    }
+
+    #[test]
+    fn unmake_capture() {
+        let fen = "rnbqkbnr/ppp1pppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2";
+        let mut pos = Position::from_fen(fen).unwrap();
+        let mv = Move::new(Square::E4, Square::D5, MoveFlag::CAPTURE);
+        assert_round_trip(&mut pos, mv);
+        assert_eq!(
+            pos.piece_on(Square::E4),
+            Some(Piece::new(Color::White, PieceKind::Pawn))
+        );
+        assert_eq!(
+            pos.piece_on(Square::D5),
+            Some(Piece::new(Color::Black, PieceKind::Pawn))
+        );
+    }
+
+    #[test]
+    fn unmake_double_pawn_push() {
+        let mut pos = Position::startpos();
+        let mv = Move::new(Square::E2, Square::E4, MoveFlag::DOUBLE_PAWN_PUSH);
+        assert_round_trip(&mut pos, mv);
+        assert_eq!(
+            pos.piece_on(Square::E2),
+            Some(Piece::new(Color::White, PieceKind::Pawn))
+        );
+        assert_eq!(pos.piece_on(Square::E4), None);
+        assert_eq!(pos.en_passant(), None);
+    }
+
+    #[test]
+    fn unmake_white_kingside_castle() {
+        let fen = "r3k2r/pppppppp/8/8/8/8/PPPPPPPP/R3K2R w KQkq - 0 1";
+        let mut pos = Position::from_fen(fen).unwrap();
+        let mv = Move::new(Square::E1, Square::G1, MoveFlag::KING_CASTLE);
+        assert_round_trip(&mut pos, mv);
+        assert_eq!(
+            pos.piece_on(Square::E1),
+            Some(Piece::new(Color::White, PieceKind::King))
+        );
+        assert_eq!(
+            pos.piece_on(Square::H1),
+            Some(Piece::new(Color::White, PieceKind::Rook))
+        );
+        assert_eq!(pos.piece_on(Square::G1), None);
+        assert_eq!(pos.piece_on(Square::F1), None);
+    }
+
+    #[test]
+    fn unmake_white_queenside_castle() {
+        let fen = "r3k2r/pppppppp/8/8/8/8/PPPPPPPP/R3K2R w KQkq - 0 1";
+        let mut pos = Position::from_fen(fen).unwrap();
+        let mv = Move::new(Square::E1, Square::C1, MoveFlag::QUEEN_CASTLE);
+        assert_round_trip(&mut pos, mv);
+        assert_eq!(
+            pos.piece_on(Square::E1),
+            Some(Piece::new(Color::White, PieceKind::King))
+        );
+        assert_eq!(
+            pos.piece_on(Square::A1),
+            Some(Piece::new(Color::White, PieceKind::Rook))
+        );
+        assert_eq!(pos.piece_on(Square::C1), None);
+        assert_eq!(pos.piece_on(Square::D1), None);
+    }
+
+    #[test]
+    fn unmake_black_kingside_castle() {
+        let fen = "r3k2r/pppppppp/8/8/8/8/PPPPPPPP/R3K2R b KQkq - 0 1";
+        let mut pos = Position::from_fen(fen).unwrap();
+        let mv = Move::new(Square::E8, Square::G8, MoveFlag::KING_CASTLE);
+        assert_round_trip(&mut pos, mv);
+        assert_eq!(
+            pos.piece_on(Square::E8),
+            Some(Piece::new(Color::Black, PieceKind::King))
+        );
+        assert_eq!(
+            pos.piece_on(Square::H8),
+            Some(Piece::new(Color::Black, PieceKind::Rook))
+        );
+        assert_eq!(pos.piece_on(Square::G8), None);
+        assert_eq!(pos.piece_on(Square::F8), None);
+    }
+
+    #[test]
+    fn unmake_black_queenside_castle() {
+        let fen = "r3k2r/pppppppp/8/8/8/8/PPPPPPPP/R3K2R b KQkq - 0 1";
+        let mut pos = Position::from_fen(fen).unwrap();
+        let mv = Move::new(Square::E8, Square::C8, MoveFlag::QUEEN_CASTLE);
+        assert_round_trip(&mut pos, mv);
+        assert_eq!(
+            pos.piece_on(Square::E8),
+            Some(Piece::new(Color::Black, PieceKind::King))
+        );
+        assert_eq!(
+            pos.piece_on(Square::A8),
+            Some(Piece::new(Color::Black, PieceKind::Rook))
+        );
+        assert_eq!(pos.piece_on(Square::C8), None);
+        assert_eq!(pos.piece_on(Square::D8), None);
+    }
+
+    #[test]
+    fn unmake_en_passant() {
+        let fen = "rnbqkbnr/pppp1ppp/8/4pP2/8/8/PPPPP1PP/RNBQKBNR w KQkq e6 0 3";
+        let mut pos = Position::from_fen(fen).unwrap();
+        let mv = Move::new(Square::F5, Square::E6, MoveFlag::EN_PASSANT);
+        assert_round_trip(&mut pos, mv);
+        assert_eq!(
+            pos.piece_on(Square::F5),
+            Some(Piece::new(Color::White, PieceKind::Pawn))
+        );
+        assert_eq!(
+            pos.piece_on(Square::E5),
+            Some(Piece::new(Color::Black, PieceKind::Pawn))
+        );
+        assert_eq!(pos.piece_on(Square::E6), None);
+        assert_eq!(pos.en_passant(), Some(Square::E6));
+    }
+
+    #[test]
+    fn unmake_promotion_knight() {
+        let fen = "4k3/4P3/8/8/8/8/8/4K3 w - - 0 1";
+        let mut pos = Position::from_fen(fen).unwrap();
+        let mv = Move::new(Square::E7, Square::E8, MoveFlag::KNIGHT_PROMOTION);
+        assert_round_trip(&mut pos, mv);
+        assert_eq!(
+            pos.piece_on(Square::E7),
+            Some(Piece::new(Color::White, PieceKind::Pawn))
+        );
+        assert_eq!(
+            pos.piece_on(Square::E8),
+            Some(Piece::new(Color::Black, PieceKind::King))
+        );
+    }
+
+    #[test]
+    fn unmake_promotion_bishop() {
+        let fen = "4k3/4P3/8/8/8/8/8/4K3 w - - 0 1";
+        let mut pos = Position::from_fen(fen).unwrap();
+        let mv = Move::new(Square::E7, Square::E8, MoveFlag::BISHOP_PROMOTION);
+        assert_round_trip(&mut pos, mv);
+        assert_eq!(
+            pos.piece_on(Square::E7),
+            Some(Piece::new(Color::White, PieceKind::Pawn))
+        );
+    }
+
+    #[test]
+    fn unmake_promotion_rook() {
+        let fen = "4k3/4P3/8/8/8/8/8/4K3 w - - 0 1";
+        let mut pos = Position::from_fen(fen).unwrap();
+        let mv = Move::new(Square::E7, Square::E8, MoveFlag::ROOK_PROMOTION);
+        assert_round_trip(&mut pos, mv);
+        assert_eq!(
+            pos.piece_on(Square::E7),
+            Some(Piece::new(Color::White, PieceKind::Pawn))
+        );
+    }
+
+    #[test]
+    fn unmake_promotion_queen() {
+        let fen = "4k3/4P3/8/8/8/8/8/4K3 w - - 0 1";
+        let mut pos = Position::from_fen(fen).unwrap();
+        let mv = Move::new(Square::E7, Square::E8, MoveFlag::QUEEN_PROMOTION);
+        assert_round_trip(&mut pos, mv);
+        assert_eq!(
+            pos.piece_on(Square::E7),
+            Some(Piece::new(Color::White, PieceKind::Pawn))
+        );
+    }
+
+    #[test]
+    fn unmake_promotion_capture() {
+        let fen = "3nk3/4P3/8/8/8/8/8/4K3 w - - 0 1";
+        let mut pos = Position::from_fen(fen).unwrap();
+        let mv = Move::new(Square::E7, Square::D8, MoveFlag::QUEEN_PROMOTION_CAPTURE);
+        assert_round_trip(&mut pos, mv);
+        assert_eq!(
+            pos.piece_on(Square::E7),
+            Some(Piece::new(Color::White, PieceKind::Pawn))
+        );
+        assert_eq!(
+            pos.piece_on(Square::D8),
+            Some(Piece::new(Color::Black, PieceKind::Knight))
+        );
+    }
+
+    #[test]
+    fn unmake_fullmove_counter() {
+        let fen = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1";
+        let mut pos = Position::from_fen(fen).unwrap();
+        let mv = Move::new(Square::E7, Square::E5, MoveFlag::DOUBLE_PAWN_PUSH);
+        assert_round_trip(&mut pos, mv);
+        assert_eq!(pos.fullmove_counter(), 1);
+    }
+
+    #[test]
+    fn unmake_preserves_ep_state() {
+        let fen = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1";
+        let mut pos = Position::from_fen(fen).unwrap();
+        let mv = Move::new(Square::B8, Square::C6, MoveFlag::QUIET);
+        assert_round_trip(&mut pos, mv);
+        assert_eq!(pos.en_passant(), Some(Square::E3));
+    }
+
+    #[test]
+    fn unmake_multiple_sequential() {
+        let mut pos = Position::startpos();
+        let original_fen = pos.to_fen();
+        let original_hash = pos.hash();
+
+        let mv1 = Move::new(Square::E2, Square::E4, MoveFlag::DOUBLE_PAWN_PUSH);
+        let undo1 = pos.make_move(mv1);
+
+        let mv2 = Move::new(Square::D7, Square::D5, MoveFlag::DOUBLE_PAWN_PUSH);
+        let undo2 = pos.make_move(mv2);
+
+        let mv3 = Move::new(Square::E4, Square::D5, MoveFlag::CAPTURE);
+        let undo3 = pos.make_move(mv3);
+
+        // Unmake in reverse order
+        pos.unmake_move(mv3, undo3);
+        pos.unmake_move(mv2, undo2);
+        pos.unmake_move(mv1, undo1);
+
+        assert_eq!(pos.to_fen(), original_fen);
+        assert_eq!(pos.hash(), original_hash);
+        assert_eq!(pos.side_to_move(), Color::White);
+        assert_eq!(pos.fullmove_counter(), 1);
+        assert_eq!(pos.halfmove_clock(), 0);
+        assert_eq!(pos.en_passant(), None);
+        assert_eq!(pos.castling_rights(), CastlingRights::ALL);
     }
 }
