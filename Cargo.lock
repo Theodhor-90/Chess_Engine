@@ -3,6 +3,13 @@
 version = 4
 
 [[package]]
+name = "chess-board"
+version = "0.1.0"
+dependencies = [
+ "chess-types",
+]
+
+[[package]]
 name = "chess-types"
 version = "0.1.0"
 dependencies = [

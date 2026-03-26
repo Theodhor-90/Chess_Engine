@@ -1,0 +1,9 @@
+- **`Cargo.toml` (workspace root)** — added `"crates/board"` to workspace members
+- **`crates/board/Cargo.toml`** — created crate manifest with `chess-types` path dependency
+- **`crates/board/src/lib.rs`** — declared `pub mod position` and re-exported `Position`, `CastlingRights`
+- **`crates/board/src/position.rs`** — implemented:
+  - `CastlingRights` bitfield struct with `WHITE_KINGSIDE`/`WHITE_QUEENSIDE`/`BLACK_KINGSIDE`/`BLACK_QUEENSIDE` constants, `ALL`/`NONE` constants, `contains`/`set`/`remove` methods
+  - `Position` struct with 12 piece bitboards, 2 occupancy bitboards, total occupancy, side to move, castling rights, en passant, halfmove clock, fullmove counter
+  - `Position::startpos()` constructor with correct starting position
+  - Accessor methods: `piece_bitboard`, `occupied_by`, `occupied`, `piece_on`, `side_to_move`, `castling_rights`, `en_passant`, `halfmove_clock`, `fullmove_counter`
+  - 5 unit tests: `startpos_piece_placement`, `startpos_occupancy`, `startpos_game_state`, `piece_on_startpos`, `occupancy_consistency` — all passing
