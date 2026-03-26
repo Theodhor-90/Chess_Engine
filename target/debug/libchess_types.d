@@ -1,0 +1,1 @@
+/Users/theodhor/Desktop/Portfolio/Chess_Engine/target/debug/libchess_types.rlib: /Users/theodhor/Desktop/Portfolio/Chess_Engine/crates/types/src/bitboard.rs /Users/theodhor/Desktop/Portfolio/Chess_Engine/crates/types/src/lib.rs

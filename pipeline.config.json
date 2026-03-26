@@ -1,0 +1,21 @@
+{
+  "project": "chess-engine",
+  "masterPlanFile": "MASTER_PLAN.md",
+  "pipelineDir": ".pipeline",
+  "levels": {
+    "milestone":       { "agents": { "creator": "opus", "challenger": "opus", "tiebreaker": "opus" } },
+    "phase":           { "agents": { "creator": "opus", "challenger": "opus", "tiebreaker": "opus" } },
+    "task":            { "agents": { "creator": "opus", "challenger": "opus", "tiebreaker": "opus" } },
+    "implementation":  { "agents": { "creator": "opus", "challenger": "opus", "tiebreaker": "opus" } }
+  },
+  "git": {
+    "enabled": true,
+    "branchPrefix": "phase/",
+    "autoCommit": true,
+    "autoPR": true
+  },
+  "preflight": {
+    "enabled": true,
+    "commands": ["cargo fmt --check", "cargo clippy -- -D warnings", "cargo test"]
+  }
+}

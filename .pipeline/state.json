@@ -1,0 +1,187 @@
+{
+  "project": "chess-engine",
+  "currentMilestone": "m01",
+  "milestones": {
+    "m01": {
+      "status": "in_progress",
+      "planning": {
+        "iteration": 2,
+        "totalAttempts": 2,
+        "tiebreakerUsed": false
+      },
+      "currentPhase": "p01",
+      "phases": {
+        "p01": {
+          "status": "in_progress",
+          "planning": {
+            "iteration": 2,
+            "totalAttempts": 2,
+            "tiebreakerUsed": false
+          },
+          "currentTask": "t01",
+          "tasks": {
+            "t01": {
+              "status": "completed",
+              "planning": {
+                "iteration": 3,
+                "totalAttempts": 3,
+                "tiebreakerUsed": false
+              },
+              "implementation": {
+                "iteration": 1,
+                "totalAttempts": 1,
+                "tiebreakerUsed": false
+              }
+            },
+            "t02": {
+              "status": "pending",
+              "planning": {
+                "iteration": 0,
+                "totalAttempts": 0,
+                "tiebreakerUsed": false
+              },
+              "implementation": {
+                "iteration": 0,
+                "totalAttempts": 0,
+                "tiebreakerUsed": false
+              }
+            },
+            "t03": {
+              "status": "pending",
+              "planning": {
+                "iteration": 0,
+                "totalAttempts": 0,
+                "tiebreakerUsed": false
+              },
+              "implementation": {
+                "iteration": 0,
+                "totalAttempts": 0,
+                "tiebreakerUsed": false
+              }
+            }
+          }
+        },
+        "p02": {
+          "status": "pending",
+          "planning": {
+            "iteration": 0,
+            "totalAttempts": 0,
+            "tiebreakerUsed": false
+          },
+          "currentTask": null,
+          "tasks": {}
+        },
+        "p03": {
+          "status": "pending",
+          "planning": {
+            "iteration": 0,
+            "totalAttempts": 0,
+            "tiebreakerUsed": false
+          },
+          "currentTask": null,
+          "tasks": {}
+        }
+      }
+    },
+    "m02": {
+      "status": "pending",
+      "planning": {
+        "iteration": 0,
+        "totalAttempts": 0,
+        "tiebreakerUsed": false
+      },
+      "currentPhase": null,
+      "phases": {}
+    },
+    "m03": {
+      "status": "pending",
+      "planning": {
+        "iteration": 0,
+        "totalAttempts": 0,
+        "tiebreakerUsed": false
+      },
+      "currentPhase": null,
+      "phases": {}
+    },
+    "m04": {
+      "status": "pending",
+      "planning": {
+        "iteration": 0,
+        "totalAttempts": 0,
+        "tiebreakerUsed": false
+      },
+      "currentPhase": null,
+      "phases": {}
+    },
+    "m05": {
+      "status": "pending",
+      "planning": {
+        "iteration": 0,
+        "totalAttempts": 0,
+        "tiebreakerUsed": false
+      },
+      "currentPhase": null,
+      "phases": {}
+    },
+    "m06": {
+      "status": "pending",
+      "planning": {
+        "iteration": 0,
+        "totalAttempts": 0,
+        "tiebreakerUsed": false
+      },
+      "currentPhase": null,
+      "phases": {}
+    },
+    "m07": {
+      "status": "pending",
+      "planning": {
+        "iteration": 0,
+        "totalAttempts": 0,
+        "tiebreakerUsed": false
+      },
+      "currentPhase": null,
+      "phases": {}
+    },
+    "m08": {
+      "status": "pending",
+      "planning": {
+        "iteration": 0,
+        "totalAttempts": 0,
+        "tiebreakerUsed": false
+      },
+      "currentPhase": null,
+      "phases": {}
+    },
+    "m09": {
+      "status": "pending",
+      "planning": {
+        "iteration": 0,
+        "totalAttempts": 0,
+        "tiebreakerUsed": false
+      },
+      "currentPhase": null,
+      "phases": {}
+    },
+    "m10": {
+      "status": "pending",
+      "planning": {
+        "iteration": 0,
+        "totalAttempts": 0,
+        "tiebreakerUsed": false
+      },
+      "currentPhase": null,
+      "phases": {}
+    },
+    "m11": {
+      "status": "pending",
+      "planning": {
+        "iteration": 0,
+        "totalAttempts": 0,
+        "tiebreakerUsed": false
+      },
+      "currentPhase": null,
+      "phases": {}
+    }
+  }
+}
