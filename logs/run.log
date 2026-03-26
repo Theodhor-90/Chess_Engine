@@ -158,3 +158,6 @@ npm error enoent Could not read package.json: Error: ENOENT: no such file or dir
 npm er
 2026-03-26T20:48:16.559Z | - | checkpoint |  | State saved after: task m01/p01/t03 completed
 2026-03-26T20:48:16.591Z | - | git |  | Staging all changes for task t03
+2026-03-26T20:48:16.898Z | - | git |  | Committing task m01/p01/t03
+2026-03-26T20:48:17.062Z | - | checkpoint |  | State saved after: phase m01/p01 completed
+2026-03-26T20:48:17.086Z | - | git |  | Staging all changes for task phase-complete
