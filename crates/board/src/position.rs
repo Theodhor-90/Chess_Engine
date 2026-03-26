@@ -1,4 +1,4 @@
-use chess_types::{Bitboard, Color, Piece, PieceKind, Square};
+use chess_types::{Bitboard, Color, File, Piece, PieceKind, Square};
 
 use crate::fen::{self, FenError};
 
@@ -31,6 +31,11 @@ impl CastlingRights {
     pub fn remove(&mut self, flag: u8) {
         self.0 &= !flag;
     }
+
+    /// Returns the raw `u8` bitfield value.
+    pub fn inner(self) -> u8 {
+        self.0
+    }
 }
 
 /// Complete state of a chess game.
@@ -44,6 +49,7 @@ pub struct Position {
     en_passant: Option<Square>,
     halfmove_clock: u8,
     fullmove_counter: u16,
+    hash: u64,
 }
 
 impl Position {
@@ -67,6 +73,7 @@ impl Position {
             en_passant,
             halfmove_clock,
             fullmove_counter,
+            hash: 0,
         }
     }
 
@@ -120,7 +127,7 @@ impl Position {
         }
         let occupied = white_occ | black_occ;
 
-        Position {
+        let mut pos = Position {
             piece_bb,
             occupied_by: [white_occ, black_occ],
             occupied,
@@ -129,7 +136,10 @@ impl Position {
             en_passant: None,
             halfmove_clock: 0,
             fullmove_counter: 1,
-        }
+            hash: 0,
+        };
+        pos.hash = crate::zobrist::compute_hash(&pos);
+        pos
     }
 
     /// Returns the bitboard for a given piece.
@@ -184,6 +194,30 @@ impl Position {
     /// Returns the fullmove counter.
     pub fn fullmove_counter(&self) -> u16 {
         self.fullmove_counter
+    }
+
+    pub fn hash(&self) -> u64 {
+        self.hash
+    }
+
+    pub(crate) fn set_hash(&mut self, hash: u64) {
+        self.hash = hash;
+    }
+
+    pub fn toggle_piece_hash(&mut self, piece: Piece, square: Square) {
+        self.hash ^= crate::zobrist::piece_square_key(piece, square);
+    }
+
+    pub fn toggle_side_to_move_hash(&mut self) {
+        self.hash ^= crate::zobrist::side_to_move_key();
+    }
+
+    pub fn toggle_castling_hash(&mut self, rights: CastlingRights) {
+        self.hash ^= crate::zobrist::castling_key(rights);
+    }
+
+    pub fn toggle_en_passant_hash(&mut self, file: File) {
+        self.hash ^= crate::zobrist::en_passant_key(file);
     }
 }
 

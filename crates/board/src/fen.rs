@@ -172,7 +172,7 @@ pub(crate) fn parse_fen(fen: &str) -> Result<Position, FenError> {
         return Err(FenError::InvalidFullmoveNumber(parts[5].to_string()));
     }
 
-    Ok(Position::new(
+    let mut pos = Position::new(
         piece_bb,
         occupied_by,
         occupied,
@@ -181,7 +181,9 @@ pub(crate) fn parse_fen(fen: &str) -> Result<Position, FenError> {
         en_passant,
         halfmove_clock,
         fullmove_counter,
-    ))
+    );
+    pos.set_hash(crate::zobrist::compute_hash(&pos));
+    Ok(pos)
 }
 
 pub(crate) fn format_fen(pos: &Position) -> String {
