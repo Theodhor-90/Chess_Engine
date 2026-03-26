@@ -1,0 +1,3 @@
+- **`crates/movegen/src/bishops.rs`** — Created. `generate_bishop_moves(pos, moves)` using `magic::bishop_attacks` lookup, iterates bishops, splits targets into captures/quiets. 4 unit tests: empty board (13 moves), excludes friendly, captures enemy, black to move.
+- **`crates/movegen/src/rooks.rs`** — Created. `generate_rook_moves(pos, moves)` using `magic::rook_attacks` lookup, identical structure to bishops. 4 unit tests: empty board (14 moves), excludes friendly, captures enemy, black to move.
+- **`crates/movegen/src/lib.rs`** — Modified. Added `pub mod bishops;` and `pub mod rooks;` declarations, `pub use bishops::generate_bishop_moves;` and `pub use rooks::generate_rook_moves;` re-exports, all in alphabetical order.
