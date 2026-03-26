@@ -5,3 +5,4 @@ edition.workspace = true
 
 [dependencies]
 chess-types = { path = "../types" }
+thiserror = "2"

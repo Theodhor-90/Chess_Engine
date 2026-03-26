@@ -1,5 +1,7 @@
 use chess_types::{Bitboard, Color, Piece, PieceKind, Square};
 
+use crate::fen::{self, FenError};
+
 /// Compact representation of the four castling flags as a `u8` bitfield.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub struct CastlingRights(u8);
@@ -45,6 +47,37 @@ pub struct Position {
 }
 
 impl Position {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new(
+        piece_bb: [Bitboard; 12],
+        occupied_by: [Bitboard; 2],
+        occupied: Bitboard,
+        side_to_move: Color,
+        castling_rights: CastlingRights,
+        en_passant: Option<Square>,
+        halfmove_clock: u8,
+        fullmove_counter: u16,
+    ) -> Position {
+        Position {
+            piece_bb,
+            occupied_by,
+            occupied,
+            side_to_move,
+            castling_rights,
+            en_passant,
+            halfmove_clock,
+            fullmove_counter,
+        }
+    }
+
+    pub fn from_fen(fen: &str) -> Result<Position, FenError> {
+        fen::parse_fen(fen)
+    }
+
+    pub fn to_fen(&self) -> String {
+        fen::format_fen(self)
+    }
+
     /// Returns the standard chess starting position.
     pub fn startpos() -> Position {
         let mut piece_bb = [Bitboard::EMPTY; 12];

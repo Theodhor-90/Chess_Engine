@@ -1,0 +1,4 @@
+- **`crates/board/Cargo.toml`** — added `thiserror = "2"` dependency
+- **`crates/board/src/position.rs`** — added `use crate::fen::{self, FenError}`; added `#[allow(clippy::too_many_arguments)] pub(crate) fn new(...)` constructor; added `pub fn from_fen(&str) -> Result<Position, FenError>` and `pub fn to_fen(&self) -> String` delegating to `fen.rs`
+- **`crates/board/src/fen.rs`** — new file: `FenError` enum (7 variants, `thiserror` derive); `parse_fen` parsing all 6 FEN fields with validation; `format_fen` producing canonical FEN; 10 unit tests (startpos round-trip, 3 middlegame round-trips, 2 endgame round-trips, startpos-vs-from_fen field comparison, rejection of wrong field count/invalid placement/invalid color/invalid castling/invalid en passant/invalid clocks)
+- **`crates/board/src/lib.rs`** — added `pub mod fen;` and `pub use fen::FenError;`
