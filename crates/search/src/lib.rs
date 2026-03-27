@@ -18,6 +18,14 @@ pub const INFINITY: i32 = 31000;
 /// Callback invoked after each completed search depth: `(depth, score, nodes, elapsed, pv)`.
 pub type DepthCallback<'a> = &'a dyn Fn(u8, i32, u64, Duration, &[Move]);
 
+#[derive(Debug, Clone)]
+pub struct SearchLimits {
+    pub max_time: Duration,
+    pub max_depth: Option<u8>,
+    pub max_nodes: Option<u64>,
+    pub stop_flag: Option<Arc<AtomicBool>>,
+}
+
 pub struct SearchContext {
     start: Instant,
     time_budget: Duration,
@@ -27,6 +35,7 @@ pub struct SearchContext {
     pv_table: PvTable,
     prev_pv: Vec<Move>,
     stop_flag: Option<Arc<AtomicBool>>,
+    max_nodes: Option<u64>,
 }
 
 impl SearchContext {
@@ -36,6 +45,11 @@ impl SearchContext {
         }
         if let Some(ref flag) = self.stop_flag {
             if flag.load(Ordering::Relaxed) {
+                self.aborted = true;
+            }
+        }
+        if let Some(max) = self.max_nodes {
+            if self.nodes >= max {
                 self.aborted = true;
             }
         }
@@ -172,19 +186,19 @@ pub fn negamax(
 
 pub fn search(
     pos: &mut Position,
-    time_budget: Duration,
-    stop_flag: Option<Arc<AtomicBool>>,
+    limits: SearchLimits,
     on_depth: Option<DepthCallback<'_>>,
 ) -> Option<Move> {
     let mut ctx = SearchContext {
         start: Instant::now(),
-        time_budget,
+        time_budget: limits.max_time,
         nodes: 0,
         aborted: false,
         killers: KillerTable::new(),
         pv_table: PvTable::new(),
         prev_pv: Vec::new(),
-        stop_flag,
+        stop_flag: limits.stop_flag,
+        max_nodes: limits.max_nodes,
     };
 
     let mut best_move: Option<Move> = None;
@@ -218,6 +232,12 @@ pub fn search(
         }
 
         depth += 1;
+
+        if let Some(d) = limits.max_depth {
+            if depth > d {
+                break;
+            }
+        }
     }
 
     best_move
@@ -238,6 +258,7 @@ mod tests {
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
+            max_nodes: None,
         }
     }
 
@@ -349,7 +370,13 @@ mod tests {
     #[test]
     fn iterative_deepening_returns_legal_move() {
         let mut pos = Position::startpos();
-        let mv = search(&mut pos, Duration::from_secs(5), None, None);
+        let limits = SearchLimits {
+            max_time: Duration::from_secs(5),
+            max_depth: None,
+            max_nodes: None,
+            stop_flag: None,
+        };
+        let mv = search(&mut pos, limits, None);
         assert!(mv.is_some());
         let legal_moves = chess_movegen::generate_legal_moves(&mut pos);
         assert!(legal_moves.iter().any(|&m| m == mv.unwrap()));
@@ -361,7 +388,13 @@ mod tests {
             "r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4",
         )
         .expect("valid fen");
-        let mv = search(&mut pos, Duration::from_secs(5), None, None);
+        let limits = SearchLimits {
+            max_time: Duration::from_secs(5),
+            max_depth: None,
+            max_nodes: None,
+            stop_flag: None,
+        };
+        let mv = search(&mut pos, limits, None);
         assert!(mv.is_some());
         let best = mv.unwrap();
         assert_eq!(best.to_sq().index(), Square::new(53).unwrap().index());
@@ -371,7 +404,13 @@ mod tests {
     fn search_respects_time_budget() {
         let mut pos = Position::startpos();
         let start = Instant::now();
-        let mv = search(&mut pos, Duration::from_millis(50), None, None);
+        let limits = SearchLimits {
+            max_time: Duration::from_millis(50),
+            max_depth: None,
+            max_nodes: None,
+            stop_flag: None,
+        };
+        let mv = search(&mut pos, limits, None);
         let elapsed = start.elapsed();
         assert!(elapsed < Duration::from_millis(200));
         assert!(mv.is_some());
@@ -382,14 +421,26 @@ mod tests {
         let mut pos =
             Position::from_fen("rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3")
                 .expect("valid fen");
-        let mv = search(&mut pos, Duration::from_secs(5), None, None);
+        let limits = SearchLimits {
+            max_time: Duration::from_secs(5),
+            max_depth: None,
+            max_nodes: None,
+            stop_flag: None,
+        };
+        let mv = search(&mut pos, limits, None);
         assert!(mv.is_none());
     }
 
     #[test]
     fn search_returns_none_for_stalemate() {
         let mut pos = Position::from_fen("k7/1R6/K7/8/8/8/8/8 b - - 0 1").expect("valid fen");
-        let mv = search(&mut pos, Duration::from_secs(5), None, None);
+        let limits = SearchLimits {
+            max_time: Duration::from_secs(5),
+            max_depth: None,
+            max_nodes: None,
+            stop_flag: None,
+        };
+        let mv = search(&mut pos, limits, None);
         assert!(mv.is_none());
     }
 
@@ -417,6 +468,7 @@ mod tests {
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
+            max_nodes: None,
         };
         // Run iterative deepening up to target depth to build PV
         for d in 1..=depth {
@@ -437,6 +489,7 @@ mod tests {
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
+            max_nodes: None,
         };
         // Run iterative deepening but never set prev_pv
         for d in 1..=depth {
@@ -469,7 +522,13 @@ mod tests {
 
         let mut pos = Position::startpos();
         let start = Instant::now();
-        let mv = search(&mut pos, Duration::from_secs(60), Some(stop), None);
+        let limits = SearchLimits {
+            max_time: Duration::from_secs(60),
+            max_depth: None,
+            max_nodes: None,
+            stop_flag: Some(stop),
+        };
+        let mv = search(&mut pos, limits, None);
         let elapsed = start.elapsed();
 
         assert!(
@@ -480,6 +539,68 @@ mod tests {
         assert!(
             mv.is_some(),
             "search should find at least one move before being stopped"
+        );
+    }
+
+    #[test]
+    fn search_respects_depth_limit() {
+        use std::sync::atomic::AtomicU8;
+
+        let max_depth_seen = Arc::new(AtomicU8::new(0));
+        let max_depth_clone = Arc::clone(&max_depth_seen);
+
+        let mut pos = Position::startpos();
+        let limits = SearchLimits {
+            max_time: Duration::from_secs(86400),
+            max_depth: Some(3),
+            max_nodes: None,
+            stop_flag: None,
+        };
+        let cb = move |depth: u8, _score: i32, _nodes: u64, _elapsed: Duration, _pv: &[Move]| {
+            max_depth_clone.fetch_max(depth, Ordering::Relaxed);
+        };
+        let mv = search(&mut pos, limits, Some(&cb));
+        assert!(mv.is_some());
+        assert_eq!(max_depth_seen.load(Ordering::Relaxed), 3);
+    }
+
+    #[test]
+    fn search_respects_node_limit() {
+        let mut pos = Position::startpos();
+        let start = Instant::now();
+        let limits = SearchLimits {
+            max_time: Duration::from_secs(86400),
+            max_depth: None,
+            max_nodes: Some(500),
+            stop_flag: None,
+        };
+        let mv = search(&mut pos, limits, None);
+        let elapsed = start.elapsed();
+        assert!(mv.is_some());
+        assert!(
+            elapsed < Duration::from_secs(1),
+            "node-limited search should terminate quickly, took {:?}",
+            elapsed
+        );
+    }
+
+    #[test]
+    fn search_respects_movetime() {
+        let mut pos = Position::startpos();
+        let start = Instant::now();
+        let limits = SearchLimits {
+            max_time: Duration::from_millis(100),
+            max_depth: None,
+            max_nodes: None,
+            stop_flag: None,
+        };
+        let mv = search(&mut pos, limits, None);
+        let elapsed = start.elapsed();
+        assert!(mv.is_some());
+        assert!(
+            elapsed < Duration::from_millis(500),
+            "movetime search should finish within 500ms, took {:?}",
+            elapsed
         );
     }
 }

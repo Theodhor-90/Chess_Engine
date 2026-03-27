@@ -38,6 +38,7 @@ pub enum UciCommand {
     },
     Go(GoParams),
     Stop,
+    PonderHit,
     Quit,
 }
 
@@ -145,6 +146,7 @@ pub fn parse(input: &str) -> Result<UciCommand, UciError> {
         "isready" => Ok(UciCommand::IsReady),
         "ucinewgame" => Ok(UciCommand::UciNewGame),
         "stop" => Ok(UciCommand::Stop),
+        "ponderhit" => Ok(UciCommand::PonderHit),
         "quit" => Ok(UciCommand::Quit),
         "position" => parse_position(&tokens[1..]),
         "go" => parse_go(&tokens[1..]),
@@ -344,5 +346,10 @@ mod tests {
             parse("go depth abc"),
             Err(UciError::InvalidGoParam(_))
         ));
+    }
+
+    #[test]
+    fn parse_ponderhit() {
+        assert_eq!(parse("ponderhit").unwrap(), UciCommand::PonderHit);
     }
 }

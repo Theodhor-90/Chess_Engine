@@ -14,6 +14,8 @@ struct EngineState {
     position: Position,
     search_handle: Option<JoinHandle<Option<Move>>>,
     stop_flag: Arc<AtomicBool>,
+    pondering: bool,
+    ponder_params: Option<chess_uci::GoParams>,
 }
 
 fn parse_uci_move(pos: &mut Position, move_str: &str) -> Option<Move> {
@@ -70,6 +72,8 @@ fn main() -> anyhow::Result<()> {
         position: Position::startpos(),
         search_handle: None,
         stop_flag: Arc::new(AtomicBool::new(false)),
+        pondering: false,
+        ponder_params: None,
     };
 
     let stdin = io::stdin();
@@ -118,24 +122,67 @@ fn main() -> anyhow::Result<()> {
                 stop_search(&mut state);
                 state.stop_flag = Arc::new(AtomicBool::new(false));
 
-                let time_budget = if let Some(mt) = params.movetime {
-                    Duration::from_millis(mt)
-                } else if params.infinite || params.depth.is_some() {
-                    Duration::from_secs(86400)
+                let no_limit = Duration::from_secs(86400);
+                let limits = if params.ponder {
+                    state.pondering = true;
+                    state.ponder_params = Some(params);
+                    chess_search::SearchLimits {
+                        max_time: no_limit,
+                        max_depth: None,
+                        max_nodes: None,
+                        stop_flag: Some(Arc::clone(&state.stop_flag)),
+                    }
+                } else if let Some(d) = params.depth {
+                    chess_search::SearchLimits {
+                        max_time: no_limit,
+                        max_depth: Some(d),
+                        max_nodes: None,
+                        stop_flag: Some(Arc::clone(&state.stop_flag)),
+                    }
+                } else if let Some(n) = params.nodes {
+                    chess_search::SearchLimits {
+                        max_time: no_limit,
+                        max_depth: None,
+                        max_nodes: Some(n),
+                        stop_flag: Some(Arc::clone(&state.stop_flag)),
+                    }
+                } else if let Some(mt) = params.movetime {
+                    chess_search::SearchLimits {
+                        max_time: Duration::from_millis(mt),
+                        max_depth: None,
+                        max_nodes: None,
+                        stop_flag: Some(Arc::clone(&state.stop_flag)),
+                    }
+                } else if params.infinite {
+                    chess_search::SearchLimits {
+                        max_time: no_limit,
+                        max_depth: None,
+                        max_nodes: None,
+                        stop_flag: Some(Arc::clone(&state.stop_flag)),
+                    }
                 } else if params.wtime.is_some() || params.btime.is_some() {
                     let side = state.position.side_to_move();
-                    chess_uci::time::allocate_time(&params, side)
+                    let budget = chess_uci::time::allocate_time(&params, side);
+                    chess_search::SearchLimits {
+                        max_time: budget,
+                        max_depth: None,
+                        max_nodes: None,
+                        stop_flag: Some(Arc::clone(&state.stop_flag)),
+                    }
                 } else {
-                    Duration::from_secs(86400)
+                    chess_search::SearchLimits {
+                        max_time: no_limit,
+                        max_depth: None,
+                        max_nodes: None,
+                        stop_flag: Some(Arc::clone(&state.stop_flag)),
+                    }
                 };
 
                 let mut search_pos = state.position.clone();
-                let stop = Arc::clone(&state.stop_flag);
                 state.search_handle = Some(std::thread::spawn(move || {
                     let result = chess_search::search(
                         &mut search_pos,
-                        time_budget,
-                        Some(stop),
+                        limits,
                         Some(&|depth, score, nodes, elapsed, pv| {
                             let time_ms = elapsed.as_millis() as u64;
                             let nps = if time_ms > 0 {
@@ -165,7 +212,22 @@ fn main() -> anyhow::Result<()> {
                     result
                 }));
             }
+            chess_uci::UciCommand::PonderHit => {
+                if state.pondering {
+                    if let Some(ref params) = state.ponder_params {
+                        let side = state.position.side_to_move();
+                        let budget = chess_uci::time::allocate_time(params, side);
+                        let stop = Arc::clone(&state.stop_flag);
+                        std::thread::spawn(move || {
+                            std::thread::sleep(budget);
+                            stop.store(true, Ordering::Relaxed);
+                        });
+                    }
+                    state.pondering = false;
+                }
+            }
             chess_uci::UciCommand::Stop => {
+                state.pondering = false;
                 stop_search(&mut state);
             }
             chess_uci::UciCommand::Quit => {
