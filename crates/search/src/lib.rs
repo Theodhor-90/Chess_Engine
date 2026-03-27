@@ -171,6 +171,14 @@ pub fn negamax(
     }
 
     let mut moves = chess_movegen::generate_legal_moves(pos);
+
+    // Validate TT move: discard if not legal (hash collision may produce invalid move)
+    if let Some(tm) = tt_move {
+        if !moves.contains(&tm) {
+            tt_move = None;
+        }
+    }
+
     let pv_move = ctx.pv_move_at(ply);
     ordering::order_moves(&mut moves, pos, &ctx.killers, ply, pv_move, tt_move);
 
@@ -779,6 +787,167 @@ mod tests {
             MATE_SCORE - 1,
             "mate in 1 should return MATE_SCORE - 1, got {}",
             score
+        );
+    }
+
+    #[test]
+    fn tt_move_ordering_across_positions() {
+        // Position 1: TT best move is a capture
+        let fens = [
+            "r1bqkbnr/pppppppp/2n5/8/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 1 2",
+            // Position 2: quiet move position
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+            // Position 3: promotion possible (pawn on 7th rank)
+            "8/P5k1/8/8/8/8/6K1/8 w - - 0 1",
+        ];
+
+        for fen in fens {
+            let mut pos = Position::from_fen(fen).expect("valid fen");
+            let hash = pos.hash();
+
+            let mut ctx = SearchContext {
+                start: Instant::now(),
+                time_budget: Duration::from_secs(60),
+                nodes: 0,
+                aborted: false,
+                killers: KillerTable::new(),
+                pv_table: PvTable::new(),
+                prev_pv: Vec::new(),
+                stop_flag: None,
+                max_nodes: None,
+                tt: TranspositionTable::new(1),
+            };
+            ctx.tt.new_generation();
+            for d in 1..=4u8 {
+                ctx.pv_table.clear();
+                negamax(&mut pos, d, -INFINITY, INFINITY, 0, &mut ctx);
+                ctx.prev_pv = ctx.pv_table.extract_pv();
+            }
+
+            let entry = ctx
+                .tt
+                .probe(hash)
+                .expect("TT should have an entry after search");
+            let tt_move = entry.best_move().expect("TT entry should have a best move");
+
+            let mut moves = chess_movegen::generate_legal_moves(&mut pos);
+            let killers = KillerTable::new();
+            ordering::order_moves(&mut moves, &pos, &killers, 0, None, Some(tt_move));
+
+            assert_eq!(
+                moves[0], tt_move,
+                "TT move should be ordered first for FEN: {}",
+                fen
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_tt_move_discarded() {
+        use chess_types::{MoveFlag, Square};
+
+        // Use a position where a1-h8 quiet move is definitely not legal
+        let fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+        let mut pos = Position::from_fen(fen).expect("valid fen");
+        let hash = pos.hash();
+
+        // Fabricate an invalid move: a1 -> h8 quiet (no piece can do this legally from startpos)
+        let fake_move = Move::new(Square::A1, Square::H8, MoveFlag::QUIET);
+        let legal_moves = chess_movegen::generate_legal_moves(&mut pos);
+        assert!(
+            !legal_moves.contains(&fake_move),
+            "fabricated move must not be legal"
+        );
+
+        let mut ctx = SearchContext {
+            start: Instant::now(),
+            time_budget: Duration::from_secs(60),
+            nodes: 0,
+            aborted: false,
+            killers: KillerTable::new(),
+            pv_table: PvTable::new(),
+            prev_pv: Vec::new(),
+            stop_flag: None,
+            max_nodes: None,
+            tt: TranspositionTable::new(1),
+        };
+        ctx.tt.new_generation();
+
+        // Store fake TT entry with the invalid move
+        let entry = TtEntry::new(
+            verification_key(hash),
+            4,
+            100,
+            BoundType::Exact,
+            Some(fake_move),
+            ctx.tt.generation(),
+        );
+        ctx.tt.store(hash, entry);
+
+        // Run negamax — should not crash and should return a valid move
+        let (score, mv) = negamax(&mut pos, 3, -INFINITY, INFINITY, 0, &mut ctx);
+        assert!(mv.is_some(), "negamax should return a valid move");
+        let best = mv.unwrap();
+        let legal_after = chess_movegen::generate_legal_moves(&mut pos);
+        assert!(legal_after.contains(&best), "returned move must be legal");
+        assert_ne!(best, fake_move, "invalid TT move should not be returned");
+        // Score should be reasonable (not garbage)
+        assert!(score.abs() < INFINITY);
+    }
+
+    #[test]
+    fn tt_move_ordering_reduces_nodes() {
+        let fen = "r1bqkb1r/pppppppp/2n2n2/8/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3";
+        let depth: u8 = 5;
+
+        // Search with TT enabled (1 MB TT — TT move ordering is effective)
+        let mut pos_tt = Position::from_fen(fen).expect("valid fen");
+        let mut ctx_tt = SearchContext {
+            start: Instant::now(),
+            time_budget: Duration::from_secs(60),
+            nodes: 0,
+            aborted: false,
+            killers: KillerTable::new(),
+            pv_table: PvTable::new(),
+            prev_pv: Vec::new(),
+            stop_flag: None,
+            max_nodes: None,
+            tt: TranspositionTable::new(1),
+        };
+        ctx_tt.tt.new_generation();
+        for d in 1..=depth {
+            ctx_tt.pv_table.clear();
+            negamax(&mut pos_tt, d, -INFINITY, INFINITY, 0, &mut ctx_tt);
+            ctx_tt.prev_pv = ctx_tt.pv_table.extract_pv();
+        }
+        let nodes_with_tt = ctx_tt.nodes;
+
+        // Search with 0 MB TT (minimal table — TT move ordering is ineffective)
+        let mut pos_no_tt = Position::from_fen(fen).expect("valid fen");
+        let mut ctx_no_tt = SearchContext {
+            start: Instant::now(),
+            time_budget: Duration::from_secs(60),
+            nodes: 0,
+            aborted: false,
+            killers: KillerTable::new(),
+            pv_table: PvTable::new(),
+            prev_pv: Vec::new(),
+            stop_flag: None,
+            max_nodes: None,
+            tt: TranspositionTable::new(0),
+        };
+        for d in 1..=depth {
+            ctx_no_tt.pv_table.clear();
+            negamax(&mut pos_no_tt, d, -INFINITY, INFINITY, 0, &mut ctx_no_tt);
+            ctx_no_tt.prev_pv = ctx_no_tt.pv_table.extract_pv();
+        }
+        let nodes_without_tt = ctx_no_tt.nodes;
+
+        assert!(
+            nodes_with_tt < nodes_without_tt,
+            "TT move ordering should reduce nodes: {} (with TT) vs {} (without TT)",
+            nodes_with_tt,
+            nodes_without_tt
         );
     }
 }
