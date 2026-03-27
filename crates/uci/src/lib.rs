@@ -1,4 +1,5 @@
 pub mod output;
+pub mod time;
 
 #[derive(Debug, thiserror::Error)]
 pub enum UciError {
