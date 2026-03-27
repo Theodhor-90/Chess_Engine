@@ -1,16 +1,12 @@
 pub mod material;
+pub mod phase;
 pub mod pst;
 
 pub use material::{BISHOP_VALUE, KNIGHT_VALUE, PAWN_VALUE, QUEEN_VALUE, ROOK_VALUE};
 
 use chess_board::Position;
 use chess_types::{Color, Piece, PieceKind};
-
-const MAX_PHASE: i32 = 24;
-
-fn compute_phase(_pos: &Position) -> i32 {
-    MAX_PHASE
-}
+use phase::{compute_phase, MAX_PHASE};
 
 pub fn evaluate(pos: &Position) -> i32 {
     let mut mg_score: i32 = 0;
@@ -92,18 +88,12 @@ mod tests {
     #[test]
     fn tapered_eval_interpolation() {
         // Verify the tapered formula produces correct intermediate values.
-        // With the placeholder phase = MAX_PHASE, the result equals mg_score.
-        // We test by manually computing expected mg values for a known position.
+        // Position has one white knight → phase = 1 (knight weight = 1).
         let pos = Position::from_fen("4k3/8/8/8/3N4/8/8/4K3 w - - 0 1").unwrap();
 
-        // Manually compute expected mg_score:
-        // White knight on d4 (index 27): material 320 + MG_KNIGHT_TABLE[27] = 320 + 13 = 333
-        // White king on e1 (index 4): material 0 + MG_KING_TABLE[4] = 0 + 8 = 8
-        // Black king on e8 (index 60): mirror_square(60) = 60^56 = 4, material 0 + MG_KING_TABLE[4] = 0 + 8 = 8
-        // mg_score = (333 + 8) - 8 = 333
-        // With placeholder phase = MAX_PHASE: score = mg_score = 333
-        // White to move, so result = 333
-        assert_eq!(evaluate(&pos), 333);
+        // mg_score = 333, eg_score = 345, phase = 1
+        // score = (333 * 1 + 345 * 23) / 24 = 8268 / 24 = 344
+        assert_eq!(evaluate(&pos), 344);
     }
 
     #[test]
