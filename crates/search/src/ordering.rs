@@ -3,6 +3,7 @@ use chess_types::Move;
 
 use crate::killer::KillerTable;
 
+const PV_SCORE: i32 = 100_000;
 const KILLER_SCORE: i32 = 50;
 
 pub fn score_mvv_lva(mv: Move, pos: &Position) -> i32 {
@@ -27,8 +28,16 @@ pub fn score_mvv_lva(mv: Move, pos: &Position) -> i32 {
         - chess_eval::material::piece_value(attacker_kind)
 }
 
-fn score_move(mv: Move, pos: &Position, killers: &KillerTable, ply: u8) -> i32 {
-    if mv.is_capture() {
+fn score_move(
+    mv: Move,
+    pos: &Position,
+    killers: &KillerTable,
+    ply: u8,
+    pv_move: Option<Move>,
+) -> i32 {
+    if pv_move == Some(mv) {
+        PV_SCORE
+    } else if mv.is_capture() {
         score_mvv_lva(mv, pos)
     } else if killers.is_killer(ply, mv) {
         KILLER_SCORE
@@ -37,10 +46,16 @@ fn score_move(mv: Move, pos: &Position, killers: &KillerTable, ply: u8) -> i32 {
     }
 }
 
-pub fn order_moves(moves: &mut [Move], pos: &Position, killers: &KillerTable, ply: u8) {
+pub fn order_moves(
+    moves: &mut [Move],
+    pos: &Position,
+    killers: &KillerTable,
+    ply: u8,
+    pv_move: Option<Move>,
+) {
     moves.sort_unstable_by(|a, b| {
-        let sa = score_move(*a, pos, killers, ply);
-        let sb = score_move(*b, pos, killers, ply);
+        let sa = score_move(*a, pos, killers, ply, pv_move);
+        let sb = score_move(*b, pos, killers, ply, pv_move);
         sb.cmp(&sa)
     });
 }
@@ -112,7 +127,7 @@ mod tests {
         let mut moves = chess_movegen::generate_legal_moves(&mut pos);
         let killers = KillerTable::new();
 
-        order_moves(&mut moves, &pos, &killers, 0);
+        order_moves(&mut moves, &pos, &killers, 0, None);
 
         let first_quiet_idx = moves.iter().position(|m| !m.is_capture());
         let last_capture_idx = moves.iter().rposition(|m| m.is_capture());
@@ -139,7 +154,7 @@ mod tests {
         let mut killers = KillerTable::new();
         killers.store(0, killer_mv);
 
-        order_moves(&mut moves, &pos, &killers, 0);
+        order_moves(&mut moves, &pos, &killers, 0, None);
 
         let killer_idx = moves
             .iter()
@@ -163,5 +178,22 @@ mod tests {
                 "killer should come before other quiet moves"
             );
         }
+    }
+
+    #[test]
+    fn pv_move_ordered_first() {
+        let mut pos = Position::from_fen("4k3/8/8/8/8/8/3q4/R3K3 w - - 0 1").expect("valid fen");
+        let mut moves = chess_movegen::generate_legal_moves(&mut pos);
+
+        let pv_mv = moves
+            .iter()
+            .find(|m| !m.is_capture())
+            .copied()
+            .expect("there must be a quiet move");
+
+        let killers = KillerTable::new();
+        order_moves(&mut moves, &pos, &killers, 0, Some(pv_mv));
+
+        assert_eq!(moves[0], pv_mv, "PV move should be at index 0");
     }
 }
