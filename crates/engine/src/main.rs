@@ -123,7 +123,8 @@ fn main() -> anyhow::Result<()> {
                 } else if params.infinite || params.depth.is_some() {
                     Duration::from_secs(86400)
                 } else if params.wtime.is_some() || params.btime.is_some() {
-                    Duration::from_secs(5)
+                    let side = state.position.side_to_move();
+                    chess_uci::time::allocate_time(&params, side)
                 } else {
                     Duration::from_secs(86400)
                 };
