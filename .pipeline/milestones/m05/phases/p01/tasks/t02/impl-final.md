@@ -1,0 +1,10 @@
+- **`crates/search/src/tt.rs`** — Modified
+  - Added `TranspositionTable` struct with fields `entries: Vec<TtEntry>`, `mask: usize`, `generation: u8`
+  - Added `new(mb)` — power-of-two sizing, `mb == 0` defaults to 1 entry
+  - Added `probe(hash)` — index via bitmask, key verification via `verification_key(hash)`
+  - Added `store(hash, entry)` — replacement policy: stale age → replace; same age, equal-or-greater depth → replace; else keep existing
+  - Added `clear()` — fills with default entries, resets generation to 0
+  - Added `resize(mb)` — reallocates with new power-of-two size, clears
+  - Added `new_generation()` — wrapping increment of generation counter
+  - Added `generation()` — accessor for current generation value
+  - Added 9 unit tests: `store_and_probe_round_trip`, `probe_returns_none_for_missing`, `shallower_does_not_replace_deeper_same_age`, `replacement_stale_entry_replaced_by_shallower`, `replacement_equal_depth_same_age_replaces`, `power_of_two_sizing`, `clear_makes_all_probes_none`, `new_generation_increments_age`, `new_with_zero_mb_creates_minimum_table`
