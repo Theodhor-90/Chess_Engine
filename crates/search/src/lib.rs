@@ -1,6 +1,7 @@
 pub mod killer;
 pub mod ordering;
 pub mod pv_table;
+pub mod tt;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;

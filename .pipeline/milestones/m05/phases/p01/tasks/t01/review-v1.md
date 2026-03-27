@@ -1,0 +1,1 @@
+The review is already complete. The structured output has been provided with an **approved** verdict. All 297 tests passed across the entire project, clippy and formatting checks were clean, and the implementation matches the locked plan exactly.
