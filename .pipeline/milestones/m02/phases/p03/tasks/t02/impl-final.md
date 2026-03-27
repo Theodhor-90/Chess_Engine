@@ -1,0 +1,8 @@
+- **`crates/movegen/src/lib.rs`** — Modified
+  - Added `generate_legal_moves(pos: &mut Position) -> Vec<Move>` public function that collects pseudo-legal moves from all generators, filters illegal ones via make/unmake + king-attack check, and returns only legal moves
+  - Added `#[cfg(test)] mod tests` with 5 unit tests:
+    - `test_startpos_legal_moves` — starting position produces exactly 20 legal moves
+    - `test_position_unchanged_after_generate` — FEN and hash unchanged after call
+    - `test_pinned_piece_restriction` — bishop pinned on file has zero legal moves
+    - `test_en_passant_discovered_check` — en passant that exposes king to rook is filtered out
+    - `test_discovered_check_filtered` — knight pinned along e-file has zero legal moves
