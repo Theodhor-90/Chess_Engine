@@ -47,6 +47,7 @@ dependencies = [
 name = "chess-uci"
 version = "0.1.0"
 dependencies = [
+ "chess-types",
  "thiserror",
 ]
 

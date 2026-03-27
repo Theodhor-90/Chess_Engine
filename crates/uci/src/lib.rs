@@ -1,3 +1,5 @@
+pub mod output;
+
 #[derive(Debug, thiserror::Error)]
 pub enum UciError {
     #[error("empty input")]
