@@ -44,6 +44,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "chess-uci"
+version = "0.1.0"
+dependencies = [
+ "thiserror",
+]
+
+[[package]]
 name = "perft"
 version = "0.1.0"
 dependencies = [
