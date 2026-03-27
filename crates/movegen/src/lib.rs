@@ -50,6 +50,20 @@ pub fn generate_legal_moves(pos: &mut Position) -> Vec<Move> {
     legal
 }
 
+pub fn perft(pos: &mut Position, depth: u32) -> u64 {
+    if depth == 0 {
+        return 1;
+    }
+    let moves = generate_legal_moves(pos);
+    let mut nodes = 0u64;
+    for mv in moves {
+        let undo = pos.make_move(mv);
+        nodes += perft(pos, depth - 1);
+        pos.unmake_move(mv, undo);
+    }
+    nodes
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
