@@ -1,0 +1,6 @@
+- **`crates/search/src/lib.rs`** — Modified:
+  - Added `pub fn quiescence(pos, alpha, beta, ply) -> i32` with stand-pat evaluation, capture/promotion filtering, and alpha-beta pruning
+  - Added `#[allow(clippy::only_used_in_recursion)]` on `quiescence` (ply parameter used in recursive calls, needed for future T03 integration)
+  - Changed `negamax` depth-0 branch from `chess_eval::evaluate(pos)` to `quiescence(pos, alpha, beta, ply)`
+  - Added 5 tests: `qsearch_stand_pat_cutoff`, `qsearch_finds_hanging_piece`, `negamax_uses_quiescence_for_tactics`, `qsearch_beta_cutoff_in_captures`, `qsearch_only_searches_captures_and_promotions`
+  - All 11 search tests pass (6 existing + 5 new), `cargo fmt --check` clean, `cargo clippy -- -D warnings` clean, full workspace (222 tests) passes
