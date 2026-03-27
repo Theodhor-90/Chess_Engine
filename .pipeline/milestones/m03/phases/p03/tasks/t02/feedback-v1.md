@@ -1,0 +1,1 @@
+{"verdict":"needs_revision","feedback":"One minor ambiguity found in test specification.","issues":[{"category":"ambiguity","description":"Vague term 'various' at: 'Store moves at various plies. Call `clear()`.' in Test 5. Specify the exact plies to use (e.g., 'Store move A at ply 0, move B at ply 5, move C at ply 10')."}]}

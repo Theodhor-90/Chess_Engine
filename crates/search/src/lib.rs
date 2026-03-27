@@ -1,9 +1,12 @@
+pub mod killer;
 pub mod ordering;
 
 use std::time::{Duration, Instant};
 
 use chess_board::Position;
 use chess_types::{Color, Move, Piece, PieceKind, Square};
+
+use killer::KillerTable;
 
 pub const MATE_SCORE: i32 = 30000;
 pub const INFINITY: i32 = 31000;
@@ -13,6 +16,7 @@ pub struct SearchContext {
     time_budget: Duration,
     nodes: u64,
     aborted: bool,
+    killers: KillerTable,
 }
 
 impl SearchContext {
@@ -62,7 +66,7 @@ pub fn quiescence(
         .into_iter()
         .filter(|mv| mv.is_capture() || mv.is_promotion())
         .collect();
-    ordering::order_moves(&mut tactical, pos);
+    ordering::order_moves(&mut tactical, pos, &ctx.killers, ply);
     for mv in tactical {
         let undo = pos.make_move(mv);
         let score = -quiescence(pos, -beta, -alpha, ply + 1, ctx);
@@ -104,7 +108,7 @@ pub fn negamax(
     }
 
     let mut moves = chess_movegen::generate_legal_moves(pos);
-    ordering::order_moves(&mut moves, pos);
+    ordering::order_moves(&mut moves, pos, &ctx.killers, ply);
 
     if moves.is_empty() {
         let king_sq = king_square(pos, pos.side_to_move());
@@ -132,6 +136,9 @@ pub fn negamax(
             alpha = score;
             best_move = Some(mv);
             if alpha >= beta {
+                if !mv.is_capture() {
+                    ctx.killers.store(ply, mv);
+                }
                 break;
             }
         }
@@ -146,6 +153,7 @@ pub fn search(pos: &mut Position, time_budget: Duration) -> Option<Move> {
         time_budget,
         nodes: 0,
         aborted: false,
+        killers: KillerTable::new(),
     };
 
     let mut best_move: Option<Move> = None;
@@ -188,6 +196,7 @@ mod tests {
             time_budget: Duration::from_secs(60),
             nodes: 0,
             aborted: false,
+            killers: KillerTable::new(),
         }
     }
 

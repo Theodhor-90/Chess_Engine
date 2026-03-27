@@ -1,6 +1,10 @@
 use chess_board::Position;
 use chess_types::Move;
 
+use crate::killer::KillerTable;
+
+const KILLER_SCORE: i32 = 50;
+
 pub fn score_mvv_lva(mv: Move, pos: &Position) -> i32 {
     if !mv.is_capture() {
         return 0;
@@ -23,10 +27,20 @@ pub fn score_mvv_lva(mv: Move, pos: &Position) -> i32 {
         - chess_eval::material::piece_value(attacker_kind)
 }
 
-pub fn order_moves(moves: &mut [Move], pos: &Position) {
+fn score_move(mv: Move, pos: &Position, killers: &KillerTable, ply: u8) -> i32 {
+    if mv.is_capture() {
+        score_mvv_lva(mv, pos)
+    } else if killers.is_killer(ply, mv) {
+        KILLER_SCORE
+    } else {
+        0
+    }
+}
+
+pub fn order_moves(moves: &mut [Move], pos: &Position, killers: &KillerTable, ply: u8) {
     moves.sort_unstable_by(|a, b| {
-        let sa = score_mvv_lva(*a, pos);
-        let sb = score_mvv_lva(*b, pos);
+        let sa = score_move(*a, pos, killers, ply);
+        let sb = score_move(*b, pos, killers, ply);
         sb.cmp(&sa)
     });
 }
@@ -38,7 +52,6 @@ mod tests {
 
     #[test]
     fn score_mvv_lva_pxq_higher_than_pxp() {
-        // Position 1: white pawn on e5 captures black queen on d6
         let mut pos1 = Position::from_fen("4k3/8/3q4/4P3/8/8/8/4K3 w - - 0 1").expect("valid fen");
         let moves1 = chess_movegen::generate_legal_moves(&mut pos1);
         let pxq = moves1
@@ -47,7 +60,6 @@ mod tests {
             .expect("pawn captures queen");
         let score_pxq = score_mvv_lva(*pxq, &pos1);
 
-        // Position 2: white pawn on e5 captures black pawn on d6
         let mut pos2 = Position::from_fen("4k3/8/3p4/4P3/8/8/8/4K3 w - - 0 1").expect("valid fen");
         let moves2 = chess_movegen::generate_legal_moves(&mut pos2);
         let pxp = moves2
@@ -61,7 +73,6 @@ mod tests {
 
     #[test]
     fn score_mvv_lva_lower_attacker_scores_higher() {
-        // Position 1: white pawn on d5 captures black rook on e6
         let mut pos1 = Position::from_fen("4k3/8/4r3/3P4/8/8/8/4K3 w - - 0 1").expect("valid fen");
         let moves1 = chess_movegen::generate_legal_moves(&mut pos1);
         let pxr = moves1
@@ -70,17 +81,15 @@ mod tests {
             .expect("pawn captures rook");
         let score_pxr = score_mvv_lva(*pxr, &pos1);
 
-        // Position 2: white knight on d4 captures black rook on e6
         let mut pos2 = Position::from_fen("4k3/8/4r3/8/3N4/8/8/4K3 w - - 0 1").expect("valid fen");
         let moves2 = chess_movegen::generate_legal_moves(&mut pos2);
-        let target = chess_types::Square::new(44).unwrap(); // e6
+        let target = chess_types::Square::new(44).unwrap();
         let nxr = moves2
             .iter()
             .find(|m| m.is_capture() && m.to_sq() == target)
             .expect("knight captures rook");
         let score_nxr = score_mvv_lva(*nxr, &pos2);
 
-        // PxR should score higher than NxR (same victim, lower-value attacker preferred)
         assert!(score_pxr > score_nxr);
     }
 
@@ -101,8 +110,9 @@ mod tests {
     fn order_moves_captures_before_quiet() {
         let mut pos = Position::from_fen("4k3/8/8/8/8/8/3q4/R3K3 w - - 0 1").expect("valid fen");
         let mut moves = chess_movegen::generate_legal_moves(&mut pos);
+        let killers = KillerTable::new();
 
-        order_moves(&mut moves, &pos);
+        order_moves(&mut moves, &pos, &killers, 0);
 
         let first_quiet_idx = moves.iter().position(|m| !m.is_capture());
         let last_capture_idx = moves.iter().rposition(|m| m.is_capture());
@@ -111,6 +121,46 @@ mod tests {
             assert!(
                 last_capture < first_quiet,
                 "all captures should come before all quiet moves"
+            );
+        }
+    }
+
+    #[test]
+    fn killer_moves_ordered_between_captures_and_quiet() {
+        let mut pos = Position::from_fen("4k3/8/8/8/8/8/3q4/R3K3 w - - 0 1").expect("valid fen");
+        let mut moves = chess_movegen::generate_legal_moves(&mut pos);
+
+        let killer_mv = moves
+            .iter()
+            .find(|m| !m.is_capture())
+            .copied()
+            .expect("there must be a quiet move");
+
+        let mut killers = KillerTable::new();
+        killers.store(0, killer_mv);
+
+        order_moves(&mut moves, &pos, &killers, 0);
+
+        let killer_idx = moves
+            .iter()
+            .position(|m| *m == killer_mv)
+            .expect("killer must be in list");
+
+        let last_capture_idx = moves.iter().rposition(|m| m.is_capture());
+        let first_other_quiet_idx = moves
+            .iter()
+            .position(|m| !m.is_capture() && *m != killer_mv);
+
+        if let Some(last_cap) = last_capture_idx {
+            assert!(
+                killer_idx > last_cap,
+                "killer should come after all captures"
+            );
+        }
+        if let Some(first_quiet) = first_other_quiet_idx {
+            assert!(
+                killer_idx < first_quiet,
+                "killer should come before other quiet moves"
             );
         }
     }
