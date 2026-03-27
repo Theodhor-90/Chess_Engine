@@ -1,3 +1,5 @@
+pub mod ordering;
+
 use std::time::{Duration, Instant};
 
 use chess_board::Position;
@@ -56,10 +58,12 @@ pub fn quiescence(
     }
 
     let moves = chess_movegen::generate_legal_moves(pos);
-    for mv in moves
+    let mut tactical: Vec<Move> = moves
         .into_iter()
         .filter(|mv| mv.is_capture() || mv.is_promotion())
-    {
+        .collect();
+    ordering::order_moves(&mut tactical, pos);
+    for mv in tactical {
         let undo = pos.make_move(mv);
         let score = -quiescence(pos, -beta, -alpha, ply + 1, ctx);
         pos.unmake_move(mv, undo);
@@ -99,7 +103,8 @@ pub fn negamax(
         return (quiescence(pos, alpha, beta, ply, ctx), None);
     }
 
-    let moves = chess_movegen::generate_legal_moves(pos);
+    let mut moves = chess_movegen::generate_legal_moves(pos);
+    ordering::order_moves(&mut moves, pos);
 
     if moves.is_empty() {
         let king_sq = king_square(pos, pos.side_to_move());
