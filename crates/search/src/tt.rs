@@ -91,6 +91,30 @@ pub fn verification_key(hash: u64) -> u16 {
     (hash >> 48) as u16
 }
 
+const MAX_PLY: i32 = 128;
+
+pub fn score_to_tt(score: i32, ply: u8) -> i32 {
+    let ply = ply as i32;
+    if score > crate::MATE_SCORE - MAX_PLY {
+        score + ply
+    } else if score < -(crate::MATE_SCORE - MAX_PLY) {
+        score - ply
+    } else {
+        score
+    }
+}
+
+pub fn score_from_tt(score: i32, ply: u8) -> i32 {
+    let ply = ply as i32;
+    if score > crate::MATE_SCORE - MAX_PLY {
+        score - ply
+    } else if score < -(crate::MATE_SCORE - MAX_PLY) {
+        score + ply
+    } else {
+        score
+    }
+}
+
 pub struct TranspositionTable {
     entries: Vec<TtEntry>,
     mask: usize,
@@ -432,5 +456,64 @@ mod tests {
         tt.store(hash, entry);
         let probed = tt.probe(hash);
         assert_eq!(probed, Some(entry));
+    }
+
+    #[test]
+    fn score_to_tt_positive_mate() {
+        assert_eq!(score_to_tt(crate::MATE_SCORE - 5, 3), crate::MATE_SCORE - 2);
+    }
+
+    #[test]
+    fn score_to_tt_negative_mate() {
+        assert_eq!(
+            score_to_tt(-(crate::MATE_SCORE - 5), 3),
+            -(crate::MATE_SCORE - 2)
+        );
+    }
+
+    #[test]
+    fn score_to_tt_non_mate_unchanged() {
+        assert_eq!(score_to_tt(150, 3), 150);
+    }
+
+    #[test]
+    fn score_from_tt_positive_mate() {
+        assert_eq!(
+            score_from_tt(crate::MATE_SCORE - 2, 3),
+            crate::MATE_SCORE - 5
+        );
+    }
+
+    #[test]
+    fn score_from_tt_negative_mate() {
+        assert_eq!(
+            score_from_tt(-(crate::MATE_SCORE - 2), 3),
+            -(crate::MATE_SCORE - 5)
+        );
+    }
+
+    #[test]
+    fn score_from_tt_non_mate_unchanged() {
+        assert_eq!(score_from_tt(150, 3), 150);
+    }
+
+    #[test]
+    fn score_round_trip() {
+        let cases = [
+            (crate::MATE_SCORE - 5, 3u8),
+            (-(crate::MATE_SCORE - 5), 3),
+            (crate::MATE_SCORE - 1, 10),
+            (-(crate::MATE_SCORE - 1), 10),
+            (150, 5),
+            (-200, 0),
+            (0, 7),
+        ];
+        for (score, ply) in cases {
+            assert_eq!(
+                score_from_tt(score_to_tt(score, ply), ply),
+                score,
+                "round trip failed for score={score}, ply={ply}"
+            );
+        }
     }
 }

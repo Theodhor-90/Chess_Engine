@@ -12,6 +12,7 @@ use chess_types::{Color, Move, Piece, PieceKind, Square};
 
 use killer::KillerTable;
 use pv_table::PvTable;
+use tt::{score_from_tt, score_to_tt, verification_key, BoundType, TranspositionTable, TtEntry};
 
 pub const MATE_SCORE: i32 = 30000;
 pub const INFINITY: i32 = 31000;
@@ -37,6 +38,7 @@ pub struct SearchContext {
     prev_pv: Vec<Move>,
     stop_flag: Option<Arc<AtomicBool>>,
     max_nodes: Option<u64>,
+    tt: TranspositionTable,
 }
 
 impl SearchContext {
@@ -100,7 +102,7 @@ pub fn quiescence(
         .into_iter()
         .filter(|mv| mv.is_capture() || mv.is_promotion())
         .collect();
-    ordering::order_moves(&mut tactical, pos, &ctx.killers, ply, None);
+    ordering::order_moves(&mut tactical, pos, &ctx.killers, ply, None, None);
     for mv in tactical {
         let undo = pos.make_move(mv);
         let score = -quiescence(pos, -beta, -alpha, ply + 1, ctx);
@@ -141,11 +143,36 @@ pub fn negamax(
         return (quiescence(pos, alpha, beta, ply, ctx), None);
     }
 
+    let original_alpha = alpha;
+
     ctx.pv_table.clear_ply(ply);
+
+    let hash = pos.hash();
+    let mut tt_move: Option<Move> = None;
+
+    if let Some(entry) = ctx.tt.probe(hash) {
+        tt_move = entry.best_move();
+        if ply > 0 && entry.depth() >= depth {
+            let tt_score = score_from_tt(entry.score(), ply);
+            match entry.bound() {
+                BoundType::Exact => return (tt_score, tt_move),
+                BoundType::LowerBound => {
+                    if tt_score >= beta {
+                        return (beta, tt_move);
+                    }
+                }
+                BoundType::UpperBound => {
+                    if tt_score <= alpha {
+                        return (alpha, tt_move);
+                    }
+                }
+            }
+        }
+    }
 
     let mut moves = chess_movegen::generate_legal_moves(pos);
     let pv_move = ctx.pv_move_at(ply);
-    ordering::order_moves(&mut moves, pos, &ctx.killers, ply, pv_move);
+    ordering::order_moves(&mut moves, pos, &ctx.killers, ply, pv_move, tt_move);
 
     if moves.is_empty() {
         let king_sq = king_square(pos, pos.side_to_move());
@@ -182,6 +209,24 @@ pub fn negamax(
         }
     }
 
+    let bound = if alpha <= original_alpha {
+        BoundType::UpperBound
+    } else if alpha >= beta {
+        BoundType::LowerBound
+    } else {
+        BoundType::Exact
+    };
+    let store_score = score_to_tt(alpha, ply);
+    let entry = TtEntry::new(
+        verification_key(hash),
+        depth,
+        store_score,
+        bound,
+        best_move,
+        ctx.tt.generation(),
+    );
+    ctx.tt.store(hash, entry);
+
     (alpha, best_move)
 }
 
@@ -200,7 +245,10 @@ pub fn search(
         prev_pv: Vec::new(),
         stop_flag: limits.stop_flag,
         max_nodes: limits.max_nodes,
+        tt: TranspositionTable::new(64),
     };
+
+    ctx.tt.new_generation();
 
     let mut best_move: Option<Move> = None;
     let mut depth: u8 = 1;
@@ -260,6 +308,7 @@ mod tests {
             prev_pv: Vec::new(),
             stop_flag: None,
             max_nodes: None,
+            tt: TranspositionTable::new(1),
         }
     }
 
@@ -470,6 +519,7 @@ mod tests {
             prev_pv: Vec::new(),
             stop_flag: None,
             max_nodes: None,
+            tt: TranspositionTable::new(1),
         };
         // Run iterative deepening up to target depth to build PV
         for d in 1..=depth {
@@ -491,6 +541,7 @@ mod tests {
             prev_pv: Vec::new(),
             stop_flag: None,
             max_nodes: None,
+            tt: TranspositionTable::new(0),
         };
         // Run iterative deepening but never set prev_pv
         for d in 1..=depth {
@@ -602,6 +653,132 @@ mod tests {
             elapsed < Duration::from_millis(500),
             "movetime search should finish within 500ms, took {:?}",
             elapsed
+        );
+    }
+
+    #[test]
+    fn tt_reduces_node_count() {
+        let fen = "r1bqkb1r/pppppppp/2n2n2/8/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3";
+        let depth: u8 = 5;
+
+        // Search with TT enabled (normal code path via iterative deepening)
+        let mut pos_tt = Position::from_fen(fen).expect("valid fen");
+        let mut ctx_tt = SearchContext {
+            start: Instant::now(),
+            time_budget: Duration::from_secs(60),
+            nodes: 0,
+            aborted: false,
+            killers: KillerTable::new(),
+            pv_table: PvTable::new(),
+            prev_pv: Vec::new(),
+            stop_flag: None,
+            max_nodes: None,
+            tt: TranspositionTable::new(1),
+        };
+        ctx_tt.tt.new_generation();
+        for d in 1..=depth {
+            ctx_tt.pv_table.clear();
+            negamax(&mut pos_tt, d, -INFINITY, INFINITY, 0, &mut ctx_tt);
+            ctx_tt.prev_pv = ctx_tt.pv_table.extract_pv();
+        }
+        let nodes_with_tt = ctx_tt.nodes;
+
+        // Search at max depth only, no TT benefit from prior iterations
+        let mut pos_no_tt = Position::from_fen(fen).expect("valid fen");
+        let mut ctx_no_tt = SearchContext {
+            start: Instant::now(),
+            time_budget: Duration::from_secs(60),
+            nodes: 0,
+            aborted: false,
+            killers: KillerTable::new(),
+            pv_table: PvTable::new(),
+            prev_pv: Vec::new(),
+            stop_flag: None,
+            max_nodes: None,
+            tt: TranspositionTable::new(0),
+        };
+        for d in 1..=depth {
+            ctx_no_tt.pv_table.clear();
+            negamax(&mut pos_no_tt, d, -INFINITY, INFINITY, 0, &mut ctx_no_tt);
+            ctx_no_tt.prev_pv = ctx_no_tt.pv_table.extract_pv();
+        }
+        let nodes_without_tt = ctx_no_tt.nodes;
+
+        assert!(
+            nodes_with_tt < nodes_without_tt,
+            "TT should reduce nodes: {} (with TT) vs {} (without TT)",
+            nodes_with_tt,
+            nodes_without_tt
+        );
+    }
+
+    #[test]
+    fn tt_move_is_ordered_first() {
+        let fen = "r1bqkbnr/pppppppp/2n5/8/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 1 2";
+        let mut pos = Position::from_fen(fen).expect("valid fen");
+        let hash = pos.hash();
+
+        // Search with a context we can inspect
+        let mut ctx = SearchContext {
+            start: Instant::now(),
+            time_budget: Duration::from_secs(60),
+            nodes: 0,
+            aborted: false,
+            killers: KillerTable::new(),
+            pv_table: PvTable::new(),
+            prev_pv: Vec::new(),
+            stop_flag: None,
+            max_nodes: None,
+            tt: TranspositionTable::new(1),
+        };
+        ctx.tt.new_generation();
+        for d in 1..=4u8 {
+            ctx.pv_table.clear();
+            negamax(&mut pos, d, -INFINITY, INFINITY, 0, &mut ctx);
+            ctx.prev_pv = ctx.pv_table.extract_pv();
+        }
+
+        let entry = ctx
+            .tt
+            .probe(hash)
+            .expect("TT should have an entry after search");
+        let tt_move = entry.best_move().expect("TT entry should have a best move");
+
+        let mut moves = chess_movegen::generate_legal_moves(&mut pos);
+        let killers = KillerTable::new();
+        ordering::order_moves(&mut moves, &pos, &killers, 0, None, Some(tt_move));
+
+        assert_eq!(moves[0], tt_move, "TT move should be ordered first");
+    }
+
+    #[test]
+    fn mate_score_correct_with_tt() {
+        // White to move, mate in 1: Qd8# (back-rank mate)
+        // White: Kg1, Qd1, Rf1; Black: Kg8, pawns f7/g7/h7
+        let mut pos = Position::from_fen("6k1/5ppp/8/8/8/8/8/3Q1RK1 w - - 0 1").expect("valid fen");
+
+        let mut ctx = SearchContext {
+            start: Instant::now(),
+            time_budget: Duration::from_secs(60),
+            nodes: 0,
+            aborted: false,
+            killers: KillerTable::new(),
+            pv_table: PvTable::new(),
+            prev_pv: Vec::new(),
+            stop_flag: None,
+            max_nodes: None,
+            tt: TranspositionTable::new(1),
+        };
+        ctx.tt.new_generation();
+        let (score, mv) = negamax(&mut pos, 4, -INFINITY, INFINITY, 0, &mut ctx);
+
+        assert!(mv.is_some(), "should find a mating move");
+        // Mate in 1 = 1 ply from root
+        assert_eq!(
+            score,
+            MATE_SCORE - 1,
+            "mate in 1 should return MATE_SCORE - 1, got {}",
+            score
         );
     }
 }
