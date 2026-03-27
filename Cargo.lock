@@ -27,6 +27,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "chess-search"
+version = "0.1.0"
+dependencies = [
+ "chess-board",
+ "chess-eval",
+ "chess-movegen",
+ "chess-types",
+]
+
+[[package]]
 name = "chess-types"
 version = "0.1.0"
 dependencies = [
