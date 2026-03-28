@@ -54,6 +54,7 @@ pub struct SearchContext {
     history: Vec<u64>,
     pub(crate) lmr_enabled: bool,
     pub(crate) futility_enabled: bool,
+    pub(crate) check_extension_enabled: bool,
 }
 
 impl SearchContext {
@@ -170,7 +171,7 @@ pub fn quiescence(
 #[allow(clippy::too_many_arguments)]
 pub fn negamax(
     pos: &mut Position,
-    depth: u8,
+    mut depth: u8,
     mut alpha: i32,
     beta: i32,
     ply: u8,
@@ -209,6 +210,15 @@ pub fn negamax(
         return (quiescence(pos, alpha, beta, ply, ctx), None);
     }
 
+    let in_check = {
+        let king_sq = king_square(pos, pos.side_to_move());
+        pos.is_square_attacked(king_sq, pos.side_to_move().opposite())
+    };
+
+    if ctx.check_extension_enabled && in_check {
+        depth = depth.saturating_add(1);
+    }
+
     let original_alpha = alpha;
 
     ctx.pv_table.clear_ply(ply);
@@ -245,11 +255,6 @@ pub fn negamax(
     }
 
     // Null move pruning
-    let in_check = {
-        let king_sq = king_square(pos, pos.side_to_move());
-        pos.is_square_attacked(king_sq, pos.side_to_move().opposite())
-    };
-
     if allow_null
         && !in_check
         && depth >= 3
@@ -545,6 +550,7 @@ pub fn search(
         history: game_history.to_vec(),
         lmr_enabled: true,
         futility_enabled: true,
+        check_extension_enabled: true,
     };
 
     ctx.tt.new_generation();
@@ -614,6 +620,7 @@ mod tests {
             history: Vec::new(),
             lmr_enabled: true,
             futility_enabled: true,
+            check_extension_enabled: true,
         }
     }
 
@@ -830,6 +837,7 @@ mod tests {
             history: Vec::new(),
             lmr_enabled: true,
             futility_enabled: true,
+            check_extension_enabled: true,
         };
         // Run iterative deepening up to target depth to build PV
         for d in 1..=depth {
@@ -866,6 +874,7 @@ mod tests {
             history: Vec::new(),
             lmr_enabled: true,
             futility_enabled: true,
+            check_extension_enabled: true,
         };
         // Run iterative deepening but never set prev_pv
         for d in 1..=depth {
@@ -1012,6 +1021,7 @@ mod tests {
             history: Vec::new(),
             lmr_enabled: true,
             futility_enabled: true,
+            check_extension_enabled: true,
         };
         ctx_tt.tt.new_generation();
         for d in 1..=depth {
@@ -1048,6 +1058,7 @@ mod tests {
             history: Vec::new(),
             lmr_enabled: true,
             futility_enabled: true,
+            check_extension_enabled: true,
         };
         for d in 1..=depth {
             ctx_no_tt.pv_table.clear();
@@ -1096,6 +1107,7 @@ mod tests {
             history: Vec::new(),
             lmr_enabled: true,
             futility_enabled: true,
+            check_extension_enabled: true,
         };
         ctx.tt.new_generation();
         for d in 1..=4u8 {
@@ -1152,6 +1164,7 @@ mod tests {
             history: Vec::new(),
             lmr_enabled: true,
             futility_enabled: true,
+            check_extension_enabled: true,
         };
         ctx.tt.new_generation();
         let (score, mv) = negamax(&mut pos, 4, -INFINITY, INFINITY, 0, true, &mut ctx, None);
@@ -1197,6 +1210,7 @@ mod tests {
                 history: Vec::new(),
                 lmr_enabled: true,
                 futility_enabled: true,
+                check_extension_enabled: true,
             };
             ctx.tt.new_generation();
             for d in 1..=4u8 {
@@ -1269,6 +1283,7 @@ mod tests {
             history: Vec::new(),
             lmr_enabled: true,
             futility_enabled: true,
+            check_extension_enabled: true,
         };
         ctx.tt.new_generation();
 
@@ -1317,6 +1332,7 @@ mod tests {
             history: Vec::new(),
             lmr_enabled: true,
             futility_enabled: true,
+            check_extension_enabled: true,
         };
         ctx_tt.tt.new_generation();
         for d in 1..=depth {
@@ -1353,6 +1369,7 @@ mod tests {
             history: Vec::new(),
             lmr_enabled: true,
             futility_enabled: true,
+            check_extension_enabled: true,
         };
         for d in 1..=depth {
             ctx_no_tt.pv_table.clear();
@@ -1401,6 +1418,7 @@ mod tests {
             history: Vec::new(),
             lmr_enabled: true,
             futility_enabled: true,
+            check_extension_enabled: true,
         };
         ctx_iid.tt.new_generation();
         for d in 1..=depth {
@@ -1437,6 +1455,7 @@ mod tests {
             history: Vec::new(),
             lmr_enabled: true,
             futility_enabled: true,
+            check_extension_enabled: true,
         };
         for d in 1..=depth {
             ctx_no_iid.pv_table.clear();
@@ -1483,6 +1502,7 @@ mod tests {
             history: Vec::new(),
             lmr_enabled: true,
             futility_enabled: true,
+            check_extension_enabled: true,
         };
         ctx_a.tt.new_generation();
 
@@ -1502,6 +1522,7 @@ mod tests {
             history: Vec::new(),
             lmr_enabled: true,
             futility_enabled: true,
+            check_extension_enabled: true,
         };
         ctx_b.tt.new_generation();
 
@@ -1541,6 +1562,7 @@ mod tests {
             history: Vec::new(),
             lmr_enabled: true,
             futility_enabled: true,
+            check_extension_enabled: true,
         };
         ctx.tt.new_generation();
 
@@ -1582,6 +1604,7 @@ mod tests {
             history: vec![current_hash, current_hash],
             lmr_enabled: true,
             futility_enabled: true,
+            check_extension_enabled: true,
         };
         ctx.tt.new_generation();
 
@@ -1655,6 +1678,7 @@ mod tests {
             history: vec![current_hash],
             lmr_enabled: true,
             futility_enabled: true,
+            check_extension_enabled: true,
         };
         ctx.tt.new_generation();
         ctx.history.push(pos2.hash());
@@ -1710,6 +1734,7 @@ mod tests {
             history: vec![child_hash, 0, root_hash],
             lmr_enabled: true,
             futility_enabled: true,
+            check_extension_enabled: true,
         };
         ctx.tt.new_generation();
 
@@ -1734,6 +1759,7 @@ mod tests {
             history: Vec::new(),
             lmr_enabled: true,
             futility_enabled: true,
+            check_extension_enabled: true,
         };
         ctx2.tt.new_generation();
 
@@ -1779,6 +1805,7 @@ mod tests {
             history: Vec::new(),
             lmr_enabled: true,
             futility_enabled: true,
+            check_extension_enabled: true,
         };
         ctx_nmp.tt.new_generation();
         negamax(&mut pos_nmp, depth, 0, 100, 1, true, &mut ctx_nmp, None);
@@ -1802,6 +1829,7 @@ mod tests {
             history: Vec::new(),
             lmr_enabled: true,
             futility_enabled: true,
+            check_extension_enabled: true,
         };
         ctx_no_nmp.tt.new_generation();
         negamax(
@@ -1849,6 +1877,7 @@ mod tests {
             history: Vec::new(),
             lmr_enabled: true,
             futility_enabled: true,
+            check_extension_enabled: true,
         };
         ctx_a.tt.new_generation();
         negamax(
@@ -1873,6 +1902,7 @@ mod tests {
             history: Vec::new(),
             lmr_enabled: true,
             futility_enabled: true,
+            check_extension_enabled: true,
         };
         ctx_b.tt.new_generation();
         negamax(
@@ -1911,6 +1941,7 @@ mod tests {
             history: Vec::new(),
             lmr_enabled: true,
             futility_enabled: true,
+            check_extension_enabled: true,
         };
         ctx_a.tt.new_generation();
         negamax(
@@ -1935,6 +1966,7 @@ mod tests {
             history: Vec::new(),
             lmr_enabled: true,
             futility_enabled: true,
+            check_extension_enabled: true,
         };
         ctx_b.tt.new_generation();
         negamax(
@@ -1973,6 +2005,7 @@ mod tests {
             history: Vec::new(),
             lmr_enabled: true,
             futility_enabled: true,
+            check_extension_enabled: true,
         };
         ctx_a.tt.new_generation();
         negamax(
@@ -1997,6 +2030,7 @@ mod tests {
             history: Vec::new(),
             lmr_enabled: true,
             futility_enabled: true,
+            check_extension_enabled: true,
         };
         ctx_b.tt.new_generation();
         negamax(
@@ -2090,6 +2124,7 @@ mod tests {
                 history: Vec::new(),
                 lmr_enabled: true,
                 futility_enabled: true,
+                check_extension_enabled: true,
             };
             ctx_lmr.tt.new_generation();
             for d in 1..=depth {
@@ -2126,6 +2161,7 @@ mod tests {
                 history: Vec::new(),
                 lmr_enabled: false,
                 futility_enabled: true,
+                check_extension_enabled: true,
             };
             ctx_no_lmr.tt.new_generation();
             for d in 1..=depth {
@@ -2194,6 +2230,7 @@ mod tests {
                 history: Vec::new(),
                 lmr_enabled: false,
                 futility_enabled: true,
+                check_extension_enabled: true,
             };
             ctx_no_lmr.tt.new_generation();
             ctx_no_lmr.history.push(pos_no_lmr.hash());
@@ -2272,6 +2309,7 @@ mod tests {
             history: Vec::new(),
             lmr_enabled: false,
             futility_enabled: true,
+            check_extension_enabled: true,
         };
         for d in 1..=depth {
             ctx_on.pv_table.clear();
@@ -2307,6 +2345,7 @@ mod tests {
             history: Vec::new(),
             lmr_enabled: false,
             futility_enabled: false,
+            check_extension_enabled: true,
         };
         for d in 1..=depth {
             ctx_off.pv_table.clear();
@@ -2357,6 +2396,7 @@ mod tests {
             history: Vec::new(),
             lmr_enabled: true,
             futility_enabled: true,
+            check_extension_enabled: true,
         };
         ctx_on.tt.new_generation();
         negamax(
@@ -2389,6 +2429,7 @@ mod tests {
             history: Vec::new(),
             lmr_enabled: true,
             futility_enabled: false,
+            check_extension_enabled: true,
         };
         ctx_off.tt.new_generation();
         negamax(
@@ -2435,6 +2476,7 @@ mod tests {
             history: Vec::new(),
             lmr_enabled: true,
             futility_enabled: true,
+            check_extension_enabled: false,
         };
         ctx_on.tt.new_generation();
 
@@ -2472,6 +2514,7 @@ mod tests {
                 history: Vec::new(),
                 lmr_enabled: true,
                 futility_enabled: false,
+                check_extension_enabled: false,
             };
             ctx_off.tt.new_generation();
             negamax(
@@ -2511,6 +2554,7 @@ mod tests {
                 history: Vec::new(),
                 lmr_enabled: true,
                 futility_enabled: true,
+                check_extension_enabled: false,
             };
             ctx_on2.tt.new_generation();
             negamax(
@@ -2542,6 +2586,7 @@ mod tests {
                 history: Vec::new(),
                 lmr_enabled: true,
                 futility_enabled: false,
+                check_extension_enabled: false,
             };
             ctx_off2.tt.new_generation();
             negamax(
@@ -2644,6 +2689,7 @@ mod tests {
                 history: Vec::new(),
                 lmr_enabled: true,
                 futility_enabled: true,
+                check_extension_enabled: true,
             };
             ctx_on.tt.new_generation();
             ctx_on.history.push(pos_on.hash());
@@ -2689,6 +2735,7 @@ mod tests {
                 history: Vec::new(),
                 lmr_enabled: true,
                 futility_enabled: false,
+                check_extension_enabled: true,
             };
             ctx_off.tt.new_generation();
             ctx_off.history.push(pos_off.hash());
@@ -2751,6 +2798,7 @@ mod tests {
             history: Vec::new(),
             lmr_enabled: true,
             futility_enabled: true,
+            check_extension_enabled: true,
         };
         ctx.tt.new_generation();
         ctx.history.push(pos.hash());
@@ -2788,6 +2836,7 @@ mod tests {
             history: Vec::new(),
             lmr_enabled: true,
             futility_enabled: false,
+            check_extension_enabled: true,
         };
         ctx2.tt.new_generation();
         ctx2.history.push(pos2.hash());
@@ -2823,6 +2872,7 @@ mod tests {
             history: Vec::new(),
             lmr_enabled: false,
             futility_enabled: true,
+            check_extension_enabled: true,
         };
         ctx3.tt.new_generation();
         ctx3.history.push(pos3.hash());
@@ -2868,6 +2918,7 @@ mod tests {
                 history: Vec::new(),
                 lmr_enabled: true,
                 futility_enabled: true,
+                check_extension_enabled: true,
             };
             ctx_lmr.tt.new_generation();
             ctx_lmr.history.push(pos_lmr.hash());
@@ -2910,6 +2961,7 @@ mod tests {
                 history: Vec::new(),
                 lmr_enabled: false,
                 futility_enabled: true,
+                check_extension_enabled: true,
             };
             ctx_no_lmr.tt.new_generation();
             ctx_no_lmr.history.push(pos_no_lmr.hash());
@@ -2945,5 +2997,277 @@ mod tests {
                 fen
             );
         }
+    }
+
+    #[test]
+    fn check_extension_activates_in_check() {
+        let fen = "rnbqkbnr/pppp1ppp/8/4p3/7q/5P2/PPPPP1PP/RNBQKBNR w KQkq - 0 2";
+        let depth: u8 = 4;
+
+        let mut pos_on = Position::from_fen(fen).expect("valid fen");
+        let mut ctx_on = SearchContext {
+            start: Instant::now(),
+            time_budget: Duration::from_secs(60),
+            nodes: 0,
+            aborted: false,
+            killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
+            countermove_table: CounterMoveTable::new(),
+            pv_table: PvTable::new(),
+            prev_pv: Vec::new(),
+            stop_flag: None,
+            max_nodes: None,
+            tt: TranspositionTable::new(1),
+            history: Vec::new(),
+            lmr_enabled: true,
+            futility_enabled: true,
+            check_extension_enabled: true,
+        };
+        ctx_on.tt.new_generation();
+        negamax(
+            &mut pos_on,
+            depth,
+            -INFINITY,
+            INFINITY,
+            0,
+            true,
+            &mut ctx_on,
+            None,
+        );
+        let nodes_on = ctx_on.nodes;
+
+        let mut pos_off = Position::from_fen(fen).expect("valid fen");
+        let mut ctx_off = SearchContext {
+            start: Instant::now(),
+            time_budget: Duration::from_secs(60),
+            nodes: 0,
+            aborted: false,
+            killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
+            countermove_table: CounterMoveTable::new(),
+            pv_table: PvTable::new(),
+            prev_pv: Vec::new(),
+            stop_flag: None,
+            max_nodes: None,
+            tt: TranspositionTable::new(1),
+            history: Vec::new(),
+            lmr_enabled: true,
+            futility_enabled: true,
+            check_extension_enabled: false,
+        };
+        ctx_off.tt.new_generation();
+        negamax(
+            &mut pos_off,
+            depth,
+            -INFINITY,
+            INFINITY,
+            0,
+            true,
+            &mut ctx_off,
+            None,
+        );
+        let nodes_off = ctx_off.nodes;
+
+        assert!(
+            nodes_on > nodes_off,
+            "check extension should search more nodes in check position: {} (on) vs {} (off)",
+            nodes_on,
+            nodes_off
+        );
+    }
+
+    #[test]
+    fn check_extension_no_effect_when_not_in_check() {
+        let mut pos_on = Position::startpos();
+        let mut ctx_on = SearchContext {
+            start: Instant::now(),
+            time_budget: Duration::from_secs(60),
+            nodes: 0,
+            aborted: false,
+            killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
+            countermove_table: CounterMoveTable::new(),
+            pv_table: PvTable::new(),
+            prev_pv: Vec::new(),
+            stop_flag: None,
+            max_nodes: None,
+            tt: TranspositionTable::new(1),
+            history: Vec::new(),
+            lmr_enabled: true,
+            futility_enabled: true,
+            check_extension_enabled: true,
+        };
+        ctx_on.tt.new_generation();
+        negamax(
+            &mut pos_on,
+            3,
+            -INFINITY,
+            INFINITY,
+            0,
+            true,
+            &mut ctx_on,
+            None,
+        );
+        let nodes_on = ctx_on.nodes;
+
+        let mut pos_off = Position::startpos();
+        let mut ctx_off = SearchContext {
+            start: Instant::now(),
+            time_budget: Duration::from_secs(60),
+            nodes: 0,
+            aborted: false,
+            killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
+            countermove_table: CounterMoveTable::new(),
+            pv_table: PvTable::new(),
+            prev_pv: Vec::new(),
+            stop_flag: None,
+            max_nodes: None,
+            tt: TranspositionTable::new(1),
+            history: Vec::new(),
+            lmr_enabled: true,
+            futility_enabled: true,
+            check_extension_enabled: false,
+        };
+        ctx_off.tt.new_generation();
+        negamax(
+            &mut pos_off,
+            3,
+            -INFINITY,
+            INFINITY,
+            0,
+            true,
+            &mut ctx_off,
+            None,
+        );
+        let nodes_off = ctx_off.nodes;
+
+        assert_eq!(
+            nodes_on, nodes_off,
+            "check extension should not affect non-check startpos: {} (on) vs {} (off)",
+            nodes_on, nodes_off
+        );
+    }
+
+    #[test]
+    fn check_extension_improves_wac_solve_rate() {
+        let wac_positions = [
+            (
+                "2rr3k/pp3pp1/1nnqbN1p/3pN3/2pP4/2P3Q1/PPB4P/R4RK1 w - - 0 1",
+                vec![Square::G6],
+            ),
+            (
+                "r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4",
+                vec![Square::F7],
+            ),
+            ("6k1/5ppp/8/8/8/8/8/3Q1RK1 w - - 0 1", vec![Square::D8]),
+            (
+                "r1bqkb1r/pppp1ppp/2n2n2/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4",
+                vec![Square::G5, Square::D5],
+            ),
+        ];
+
+        let depth = 6;
+        let mut correct_on = 0;
+        let mut correct_off = 0;
+
+        for (fen, expected_targets) in &wac_positions {
+            let mut pos_on = Position::from_fen(fen).expect("valid fen");
+            let mut ctx_on = SearchContext {
+                start: Instant::now(),
+                time_budget: Duration::from_secs(10),
+                nodes: 0,
+                aborted: false,
+                killers: KillerTable::new(),
+                history_table: HistoryTable::new(),
+                countermove_table: CounterMoveTable::new(),
+                pv_table: PvTable::new(),
+                prev_pv: Vec::new(),
+                stop_flag: None,
+                max_nodes: None,
+                tt: TranspositionTable::new(16),
+                history: Vec::new(),
+                lmr_enabled: true,
+                futility_enabled: true,
+                check_extension_enabled: true,
+            };
+            ctx_on.tt.new_generation();
+            ctx_on.history.push(pos_on.hash());
+            let mut mv_on = None;
+            for d in 1..=depth as u8 {
+                ctx_on.pv_table.clear();
+                let (_, mv) = negamax(
+                    &mut pos_on,
+                    d,
+                    -INFINITY,
+                    INFINITY,
+                    0,
+                    true,
+                    &mut ctx_on,
+                    None,
+                );
+                ctx_on.prev_pv = ctx_on.pv_table.extract_pv();
+                if mv.is_some() {
+                    mv_on = mv;
+                }
+            }
+            if let Some(m) = mv_on {
+                if expected_targets.contains(&m.to_sq()) {
+                    correct_on += 1;
+                }
+            }
+
+            let mut pos_off = Position::from_fen(fen).expect("valid fen");
+            let mut ctx_off = SearchContext {
+                start: Instant::now(),
+                time_budget: Duration::from_secs(10),
+                nodes: 0,
+                aborted: false,
+                killers: KillerTable::new(),
+                history_table: HistoryTable::new(),
+                countermove_table: CounterMoveTable::new(),
+                pv_table: PvTable::new(),
+                prev_pv: Vec::new(),
+                stop_flag: None,
+                max_nodes: None,
+                tt: TranspositionTable::new(16),
+                history: Vec::new(),
+                lmr_enabled: true,
+                futility_enabled: true,
+                check_extension_enabled: false,
+            };
+            ctx_off.tt.new_generation();
+            ctx_off.history.push(pos_off.hash());
+            let mut mv_off = None;
+            for d in 1..=depth as u8 {
+                ctx_off.pv_table.clear();
+                let (_, mv) = negamax(
+                    &mut pos_off,
+                    d,
+                    -INFINITY,
+                    INFINITY,
+                    0,
+                    true,
+                    &mut ctx_off,
+                    None,
+                );
+                ctx_off.prev_pv = ctx_off.pv_table.extract_pv();
+                if mv.is_some() {
+                    mv_off = mv;
+                }
+            }
+            if let Some(m) = mv_off {
+                if expected_targets.contains(&m.to_sq()) {
+                    correct_off += 1;
+                }
+            }
+        }
+
+        assert!(
+            correct_on >= correct_off,
+            "check extension should not reduce WAC solve rate: {} (on) vs {} (off)",
+            correct_on,
+            correct_off
+        );
     }
 }
