@@ -5,6 +5,7 @@ pub mod tt;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use chess_board::Position;
@@ -42,6 +43,7 @@ pub struct SearchContext {
     max_nodes: Option<u64>,
     tt: TranspositionTable,
     history: Vec<u64>,
+    pub(crate) lmr_enabled: bool,
 }
 
 impl SearchContext {
@@ -64,6 +66,23 @@ impl SearchContext {
     fn pv_move_at(&self, ply: u8) -> Option<Move> {
         self.prev_pv.get(ply as usize).copied()
     }
+}
+
+const LMR_MAX_DEPTH: usize = 64;
+const LMR_MAX_MOVES: usize = 64;
+
+#[allow(clippy::needless_range_loop)]
+fn lmr_table() -> &'static [[u8; LMR_MAX_MOVES]; LMR_MAX_DEPTH] {
+    static TABLE: OnceLock<[[u8; LMR_MAX_MOVES]; LMR_MAX_DEPTH]> = OnceLock::new();
+    TABLE.get_or_init(|| {
+        let mut t = [[0u8; LMR_MAX_MOVES]; LMR_MAX_DEPTH];
+        for d in 1..LMR_MAX_DEPTH {
+            for m in 1..LMR_MAX_MOVES {
+                t[d][m] = ((d as f64).ln() * (m as f64).ln() / 1.75).floor() as u8;
+            }
+        }
+        t
+    })
 }
 
 fn king_square(pos: &Position, side: Color) -> Square {
@@ -259,11 +278,54 @@ pub fn negamax(
 
     let mut best_move: Option<Move> = None;
 
-    for mv in moves {
+    for (moves_searched, mv) in (0_u32..).zip(moves.into_iter()) {
         let undo = pos.make_move(mv);
         ctx.history.push(pos.hash());
-        let (score, _) = negamax(pos, depth - 1, -beta, -alpha, ply + 1, true, ctx);
-        let score = -score;
+
+        let is_tt_move = tt_move == Some(mv);
+        let is_pv_move = pv_move == Some(mv);
+        let is_killer = ctx.killers.is_killer(ply, mv);
+        let is_tactical = mv.is_capture() || mv.is_promotion();
+
+        let gives_check = {
+            let opp_king_sq = king_square(pos, pos.side_to_move());
+            pos.is_square_attacked(opp_king_sq, pos.side_to_move().opposite())
+        };
+
+        let do_lmr = ctx.lmr_enabled
+            && depth >= 3
+            && moves_searched >= 3
+            && !is_tt_move
+            && !is_pv_move
+            && !is_killer
+            && !is_tactical
+            && !in_check
+            && !gives_check;
+
+        let mut score;
+        if do_lmr {
+            let table = lmr_table();
+            let d = (depth as usize).min(LMR_MAX_DEPTH - 1);
+            let m = (moves_searched as usize).min(LMR_MAX_MOVES - 1);
+            let reduction = table[d][m].max(1);
+
+            let reduced_depth = if (depth as i32 - 1 - reduction as i32) > 0 {
+                depth - 1 - reduction
+            } else {
+                0
+            };
+            let (s, _) = negamax(pos, reduced_depth, -alpha - 1, -alpha, ply + 1, true, ctx);
+            score = -s;
+
+            if score > alpha {
+                let (s2, _) = negamax(pos, depth - 1, -beta, -alpha, ply + 1, true, ctx);
+                score = -s2;
+            }
+        } else {
+            let (s, _) = negamax(pos, depth - 1, -beta, -alpha, ply + 1, true, ctx);
+            score = -s;
+        }
+
         ctx.history.pop();
         pos.unmake_move(mv, undo);
 
@@ -323,6 +385,7 @@ pub fn search(
         max_nodes: limits.max_nodes,
         tt: TranspositionTable::new(64),
         history: game_history.to_vec(),
+        lmr_enabled: true,
     };
 
     ctx.tt.new_generation();
@@ -388,6 +451,7 @@ mod tests {
             max_nodes: None,
             tt: TranspositionTable::new(1),
             history: Vec::new(),
+            lmr_enabled: true,
         }
     }
 
@@ -600,6 +664,7 @@ mod tests {
             max_nodes: None,
             tt: TranspositionTable::new(1),
             history: Vec::new(),
+            lmr_enabled: true,
         };
         // Run iterative deepening up to target depth to build PV
         for d in 1..=depth {
@@ -623,6 +688,7 @@ mod tests {
             max_nodes: None,
             tt: TranspositionTable::new(0),
             history: Vec::new(),
+            lmr_enabled: true,
         };
         // Run iterative deepening but never set prev_pv
         for d in 1..=depth {
@@ -764,6 +830,7 @@ mod tests {
             max_nodes: None,
             tt: TranspositionTable::new(1),
             history: Vec::new(),
+            lmr_enabled: true,
         };
         ctx_tt.tt.new_generation();
         for d in 1..=depth {
@@ -787,6 +854,7 @@ mod tests {
             max_nodes: None,
             tt: TranspositionTable::new(0),
             history: Vec::new(),
+            lmr_enabled: true,
         };
         for d in 1..=depth {
             ctx_no_tt.pv_table.clear();
@@ -830,6 +898,7 @@ mod tests {
             max_nodes: None,
             tt: TranspositionTable::new(1),
             history: Vec::new(),
+            lmr_enabled: true,
         };
         ctx.tt.new_generation();
         for d in 1..=4u8 {
@@ -869,6 +938,7 @@ mod tests {
             max_nodes: None,
             tt: TranspositionTable::new(1),
             history: Vec::new(),
+            lmr_enabled: true,
         };
         ctx.tt.new_generation();
         let (score, mv) = negamax(&mut pos, 4, -INFINITY, INFINITY, 0, true, &mut ctx);
@@ -910,6 +980,7 @@ mod tests {
                 max_nodes: None,
                 tt: TranspositionTable::new(1),
                 history: Vec::new(),
+                lmr_enabled: true,
             };
             ctx.tt.new_generation();
             for d in 1..=4u8 {
@@ -965,6 +1036,7 @@ mod tests {
             max_nodes: None,
             tt: TranspositionTable::new(1),
             history: Vec::new(),
+            lmr_enabled: true,
         };
         ctx.tt.new_generation();
 
@@ -1009,6 +1081,7 @@ mod tests {
             max_nodes: None,
             tt: TranspositionTable::new(1),
             history: Vec::new(),
+            lmr_enabled: true,
         };
         ctx_tt.tt.new_generation();
         for d in 1..=depth {
@@ -1032,6 +1105,7 @@ mod tests {
             max_nodes: None,
             tt: TranspositionTable::new(0),
             history: Vec::new(),
+            lmr_enabled: true,
         };
         for d in 1..=depth {
             ctx_no_tt.pv_table.clear();
@@ -1075,6 +1149,7 @@ mod tests {
             max_nodes: None,
             tt: TranspositionTable::new(1),
             history: Vec::new(),
+            lmr_enabled: true,
         };
         ctx_iid.tt.new_generation();
         for d in 1..=depth {
@@ -1098,6 +1173,7 @@ mod tests {
             max_nodes: None,
             tt: TranspositionTable::new(0),
             history: Vec::new(),
+            lmr_enabled: true,
         };
         for d in 1..=depth {
             ctx_no_iid.pv_table.clear();
@@ -1139,6 +1215,7 @@ mod tests {
             max_nodes: None,
             tt: TranspositionTable::new(1),
             history: Vec::new(),
+            lmr_enabled: true,
         };
         ctx_a.tt.new_generation();
 
@@ -1154,6 +1231,7 @@ mod tests {
             max_nodes: None,
             tt: TranspositionTable::new(1),
             history: Vec::new(),
+            lmr_enabled: true,
         };
         ctx_b.tt.new_generation();
 
@@ -1185,6 +1263,7 @@ mod tests {
             max_nodes: None,
             tt: TranspositionTable::new(1),
             history: Vec::new(),
+            lmr_enabled: true,
         };
         ctx.tt.new_generation();
 
@@ -1222,6 +1301,7 @@ mod tests {
             max_nodes: None,
             tt: TranspositionTable::new(1),
             history: vec![current_hash, current_hash],
+            lmr_enabled: true,
         };
         ctx.tt.new_generation();
 
@@ -1291,6 +1371,7 @@ mod tests {
             max_nodes: None,
             tt: TranspositionTable::new(1),
             history: vec![current_hash],
+            lmr_enabled: true,
         };
         ctx.tt.new_generation();
         ctx.history.push(pos2.hash());
@@ -1342,6 +1423,7 @@ mod tests {
             max_nodes: None,
             tt: TranspositionTable::new(1),
             history: vec![child_hash, 0, root_hash],
+            lmr_enabled: true,
         };
         ctx.tt.new_generation();
 
@@ -1361,6 +1443,7 @@ mod tests {
             max_nodes: None,
             tt: TranspositionTable::new(1),
             history: Vec::new(),
+            lmr_enabled: true,
         };
         ctx2.tt.new_generation();
 
@@ -1402,6 +1485,7 @@ mod tests {
             max_nodes: None,
             tt: TranspositionTable::new(1),
             history: Vec::new(),
+            lmr_enabled: true,
         };
         ctx_nmp.tt.new_generation();
         negamax(&mut pos_nmp, depth, 0, 100, 1, true, &mut ctx_nmp);
@@ -1421,6 +1505,7 @@ mod tests {
             max_nodes: None,
             tt: TranspositionTable::new(1),
             history: Vec::new(),
+            lmr_enabled: true,
         };
         ctx_no_nmp.tt.new_generation();
         negamax(&mut pos_no_nmp, depth, 0, 100, 1, false, &mut ctx_no_nmp);
@@ -1455,6 +1540,7 @@ mod tests {
             max_nodes: None,
             tt: TranspositionTable::new(1),
             history: Vec::new(),
+            lmr_enabled: true,
         };
         ctx_a.tt.new_generation();
         negamax(&mut pos_a, depth, -INFINITY, INFINITY, 0, true, &mut ctx_a);
@@ -1473,6 +1559,7 @@ mod tests {
             max_nodes: None,
             tt: TranspositionTable::new(1),
             history: Vec::new(),
+            lmr_enabled: true,
         };
         ctx_b.tt.new_generation();
         negamax(&mut pos_b, depth, -INFINITY, INFINITY, 0, false, &mut ctx_b);
@@ -1505,6 +1592,7 @@ mod tests {
             max_nodes: None,
             tt: TranspositionTable::new(1),
             history: Vec::new(),
+            lmr_enabled: true,
         };
         ctx_a.tt.new_generation();
         negamax(&mut pos_a, depth, -INFINITY, INFINITY, 0, true, &mut ctx_a);
@@ -1523,6 +1611,7 @@ mod tests {
             max_nodes: None,
             tt: TranspositionTable::new(1),
             history: Vec::new(),
+            lmr_enabled: true,
         };
         ctx_b.tt.new_generation();
         negamax(&mut pos_b, depth, -INFINITY, INFINITY, 0, false, &mut ctx_b);
@@ -1555,6 +1644,7 @@ mod tests {
             max_nodes: None,
             tt: TranspositionTable::new(1),
             history: Vec::new(),
+            lmr_enabled: true,
         };
         ctx_a.tt.new_generation();
         negamax(&mut pos_a, depth, -INFINITY, INFINITY, 0, false, &mut ctx_a);
@@ -1573,6 +1663,7 @@ mod tests {
             max_nodes: None,
             tt: TranspositionTable::new(1),
             history: Vec::new(),
+            lmr_enabled: true,
         };
         ctx_b.tt.new_generation();
         negamax(&mut pos_b, depth, -INFINITY, INFINITY, 0, false, &mut ctx_b);
@@ -1612,6 +1703,271 @@ mod tests {
                 mv.unwrap().to_sq(),
                 expected_target,
                 "wrong target square for FEN: {}",
+                fen
+            );
+        }
+    }
+
+    #[test]
+    fn lmr_table_values_correct() {
+        let table = lmr_table();
+
+        // Row 0 and column 0 should all be 0
+        for m in 0..LMR_MAX_MOVES {
+            assert_eq!(table[0][m], 0, "table[0][{}] should be 0", m);
+        }
+        for d in 0..LMR_MAX_DEPTH {
+            assert_eq!(table[d][0], 0, "table[{}][0] should be 0", d);
+        }
+
+        // table[6][4] = floor(ln(6) * ln(4) / 1.75) = floor(1.419) = 1
+        assert_eq!(table[6][4], 1, "table[6][4] should be 1");
+
+        // table[10][10] = floor(ln(10) * ln(10) / 1.75) = floor(3.031) = 3
+        assert_eq!(table[10][10], 3, "table[10][10] should be 3");
+    }
+
+    #[test]
+    fn lmr_reduces_node_count() {
+        let positions = [
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+            "r1bqkbnr/pppppppp/2n5/8/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 1 2",
+            "r1bqkb1r/pppppppp/2n2n2/8/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3",
+        ];
+        let depth: u8 = 10;
+
+        for fen in positions {
+            // Search with LMR enabled
+            let mut pos_lmr = Position::from_fen(fen).expect("valid fen");
+            let mut ctx_lmr = SearchContext {
+                start: Instant::now(),
+                time_budget: Duration::from_secs(120),
+                nodes: 0,
+                aborted: false,
+                killers: KillerTable::new(),
+                pv_table: PvTable::new(),
+                prev_pv: Vec::new(),
+                stop_flag: None,
+                max_nodes: None,
+                tt: TranspositionTable::new(16),
+                history: Vec::new(),
+                lmr_enabled: true,
+            };
+            ctx_lmr.tt.new_generation();
+            for d in 1..=depth {
+                ctx_lmr.pv_table.clear();
+                negamax(&mut pos_lmr, d, -INFINITY, INFINITY, 0, true, &mut ctx_lmr);
+                ctx_lmr.prev_pv = ctx_lmr.pv_table.extract_pv();
+            }
+            let nodes_with_lmr = ctx_lmr.nodes;
+
+            // Search with LMR disabled
+            let mut pos_no_lmr = Position::from_fen(fen).expect("valid fen");
+            let mut ctx_no_lmr = SearchContext {
+                start: Instant::now(),
+                time_budget: Duration::from_secs(120),
+                nodes: 0,
+                aborted: false,
+                killers: KillerTable::new(),
+                pv_table: PvTable::new(),
+                prev_pv: Vec::new(),
+                stop_flag: None,
+                max_nodes: None,
+                tt: TranspositionTable::new(16),
+                history: Vec::new(),
+                lmr_enabled: false,
+            };
+            ctx_no_lmr.tt.new_generation();
+            for d in 1..=depth {
+                ctx_no_lmr.pv_table.clear();
+                negamax(
+                    &mut pos_no_lmr,
+                    d,
+                    -INFINITY,
+                    INFINITY,
+                    0,
+                    true,
+                    &mut ctx_no_lmr,
+                );
+                ctx_no_lmr.prev_pv = ctx_no_lmr.pv_table.extract_pv();
+            }
+            let nodes_without_lmr = ctx_no_lmr.nodes;
+
+            let reduction_pct = 1.0 - (nodes_with_lmr as f64 / nodes_without_lmr as f64);
+            assert!(
+                reduction_pct >= 0.30,
+                "LMR should reduce nodes by >=30% for FEN: {} ({} with LMR vs {} without, reduction {:.1}%)",
+                fen,
+                nodes_with_lmr,
+                nodes_without_lmr,
+                reduction_pct * 100.0
+            );
+        }
+    }
+
+    #[test]
+    fn lmr_skips_tt_moves() {
+        // Tactical positions: LMR must not reduce TT/PV/killer/capture/promotion moves.
+        // Best move must be identical with and without LMR.
+        let positions = [
+            // Scholar's mate: Qxf7#
+            "r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4",
+            // Back-rank mate: Qd8#
+            "6k1/5ppp/8/8/8/8/8/3Q1RK1 w - - 0 1",
+        ];
+
+        for fen in positions {
+            let mut pos_lmr = Position::from_fen(fen).expect("valid fen");
+            let limits_lmr = SearchLimits {
+                max_time: Duration::from_secs(10),
+                max_depth: Some(6),
+                max_nodes: None,
+                stop_flag: None,
+            };
+            let mv_lmr = search(&mut pos_lmr, limits_lmr, &[], None);
+
+            let mut pos_no_lmr = Position::from_fen(fen).expect("valid fen");
+            let mut ctx_no_lmr = SearchContext {
+                start: Instant::now(),
+                time_budget: Duration::from_secs(10),
+                nodes: 0,
+                aborted: false,
+                killers: KillerTable::new(),
+                pv_table: PvTable::new(),
+                prev_pv: Vec::new(),
+                stop_flag: None,
+                max_nodes: None,
+                tt: TranspositionTable::new(64),
+                history: Vec::new(),
+                lmr_enabled: false,
+            };
+            ctx_no_lmr.tt.new_generation();
+            ctx_no_lmr.history.push(pos_no_lmr.hash());
+            let mut mv_no_lmr: Option<Move> = None;
+            for d in 1..=6u8 {
+                ctx_no_lmr.pv_table.clear();
+                let (_, mv) = negamax(
+                    &mut pos_no_lmr,
+                    d,
+                    -INFINITY,
+                    INFINITY,
+                    0,
+                    true,
+                    &mut ctx_no_lmr,
+                );
+                ctx_no_lmr.prev_pv = ctx_no_lmr.pv_table.extract_pv();
+                if mv.is_some() {
+                    mv_no_lmr = mv;
+                }
+            }
+
+            assert!(
+                mv_lmr.is_some(),
+                "LMR search should find a move for FEN: {}",
+                fen
+            );
+            assert!(
+                mv_no_lmr.is_some(),
+                "non-LMR search should find a move for FEN: {}",
+                fen
+            );
+            assert_eq!(
+                mv_lmr.unwrap(),
+                mv_no_lmr.unwrap(),
+                "LMR should not change best move for tactical FEN: {}",
+                fen
+            );
+        }
+    }
+
+    #[test]
+    fn lmr_re_search_on_fail_high() {
+        // Compare search results with LMR enabled vs disabled on tactical positions at depth 6.
+        // Best move must match; scores must match on forced mate positions.
+        let positions = [
+            // Scholar's mate: Qxf7#
+            "r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4",
+            // Back-rank mate: Qd8#
+            "6k1/5ppp/8/8/8/8/8/3Q1RK1 w - - 0 1",
+        ];
+
+        for fen in positions {
+            // With LMR
+            let mut pos_lmr = Position::from_fen(fen).expect("valid fen");
+            let mut ctx_lmr = SearchContext {
+                start: Instant::now(),
+                time_budget: Duration::from_secs(10),
+                nodes: 0,
+                aborted: false,
+                killers: KillerTable::new(),
+                pv_table: PvTable::new(),
+                prev_pv: Vec::new(),
+                stop_flag: None,
+                max_nodes: None,
+                tt: TranspositionTable::new(16),
+                history: Vec::new(),
+                lmr_enabled: true,
+            };
+            ctx_lmr.tt.new_generation();
+            ctx_lmr.history.push(pos_lmr.hash());
+            let mut best_lmr = None;
+            let mut score_lmr = 0;
+            for d in 1..=6u8 {
+                ctx_lmr.pv_table.clear();
+                let (s, mv) = negamax(&mut pos_lmr, d, -INFINITY, INFINITY, 0, true, &mut ctx_lmr);
+                ctx_lmr.prev_pv = ctx_lmr.pv_table.extract_pv();
+                if mv.is_some() {
+                    best_lmr = mv;
+                    score_lmr = s;
+                }
+            }
+
+            // Without LMR
+            let mut pos_no_lmr = Position::from_fen(fen).expect("valid fen");
+            let mut ctx_no_lmr = SearchContext {
+                start: Instant::now(),
+                time_budget: Duration::from_secs(10),
+                nodes: 0,
+                aborted: false,
+                killers: KillerTable::new(),
+                pv_table: PvTable::new(),
+                prev_pv: Vec::new(),
+                stop_flag: None,
+                max_nodes: None,
+                tt: TranspositionTable::new(16),
+                history: Vec::new(),
+                lmr_enabled: false,
+            };
+            ctx_no_lmr.tt.new_generation();
+            ctx_no_lmr.history.push(pos_no_lmr.hash());
+            let mut best_no_lmr = None;
+            let mut score_no_lmr = 0;
+            for d in 1..=6u8 {
+                ctx_no_lmr.pv_table.clear();
+                let (s, mv) = negamax(
+                    &mut pos_no_lmr,
+                    d,
+                    -INFINITY,
+                    INFINITY,
+                    0,
+                    true,
+                    &mut ctx_no_lmr,
+                );
+                ctx_no_lmr.prev_pv = ctx_no_lmr.pv_table.extract_pv();
+                if mv.is_some() {
+                    best_no_lmr = mv;
+                    score_no_lmr = s;
+                }
+            }
+
+            assert_eq!(
+                best_lmr, best_no_lmr,
+                "LMR re-search should preserve best move for FEN: {}",
+                fen
+            );
+            assert_eq!(
+                score_lmr, score_no_lmr,
+                "LMR re-search should preserve score for forced mate FEN: {}",
                 fen
             );
         }
