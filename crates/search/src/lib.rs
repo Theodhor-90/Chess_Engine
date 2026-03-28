@@ -1,3 +1,4 @@
+pub mod history;
 pub mod killer;
 pub mod ordering;
 pub mod pv_table;
@@ -11,6 +12,7 @@ use std::time::{Duration, Instant};
 use chess_board::Position;
 use chess_types::{Color, Move, Piece, PieceKind, Square};
 
+use history::HistoryTable;
 use killer::KillerTable;
 use pv_table::PvTable;
 use tt::{score_from_tt, score_to_tt, verification_key, BoundType, TranspositionTable, TtEntry};
@@ -39,6 +41,7 @@ pub struct SearchContext {
     nodes: u64,
     aborted: bool,
     killers: KillerTable,
+    history_table: HistoryTable,
     pv_table: PvTable,
     prev_pv: Vec<Move>,
     stop_flag: Option<Arc<AtomicBool>>,
@@ -127,7 +130,16 @@ pub fn quiescence(
         .into_iter()
         .filter(|mv| mv.is_capture() || mv.is_promotion())
         .collect();
-    ordering::order_moves(&mut tactical, pos, &ctx.killers, ply, None, None);
+    ordering::order_moves(
+        &mut tactical,
+        pos,
+        &ctx.killers,
+        &ctx.history_table,
+        ply,
+        None,
+        None,
+        pos.side_to_move(),
+    );
     for mv in tactical {
         let undo = pos.make_move(mv);
         let score = -quiescence(pos, -beta, -alpha, ply + 1, ctx);
@@ -203,6 +215,14 @@ pub fn negamax(
                 BoundType::Exact => return (tt_score, tt_move),
                 BoundType::LowerBound => {
                     if tt_score >= beta {
+                        if let Some(tm) = tt_move {
+                            if !tm.is_capture() && !tm.is_promotion() {
+                                let bonus = (depth as i32) * (depth as i32);
+                                let side = pos.side_to_move();
+                                ctx.history_table
+                                    .update(side, tm.from_sq(), tm.to_sq(), bonus);
+                            }
+                        }
                         return (beta, tt_move);
                     }
                 }
@@ -281,7 +301,17 @@ pub fn negamax(
     }
 
     let pv_move = ctx.pv_move_at(ply);
-    ordering::order_moves(&mut moves, pos, &ctx.killers, ply, pv_move, tt_move);
+    let side = pos.side_to_move();
+    ordering::order_moves(
+        &mut moves,
+        pos,
+        &ctx.killers,
+        &ctx.history_table,
+        ply,
+        pv_move,
+        tt_move,
+        side,
+    );
 
     if moves.is_empty() {
         let king_sq = king_square(pos, pos.side_to_move());
@@ -294,6 +324,7 @@ pub fn negamax(
     }
 
     let mut best_move: Option<Move> = None;
+    let mut searched_quiets: Vec<Move> = Vec::new();
 
     for (moves_searched, mv) in (0_u32..).zip(moves.into_iter()) {
         let undo = pos.make_move(mv);
@@ -366,6 +397,10 @@ pub fn negamax(
             return (0, None);
         }
 
+        if !mv.is_capture() && !mv.is_promotion() {
+            searched_quiets.push(mv);
+        }
+
         if score > alpha {
             alpha = score;
             best_move = Some(mv);
@@ -373,6 +408,17 @@ pub fn negamax(
             if alpha >= beta {
                 if !mv.is_capture() {
                     ctx.killers.store(ply, mv);
+                    let bonus = (depth as i32) * (depth as i32);
+                    let side = pos.side_to_move();
+                    ctx.history_table
+                        .update(side, mv.from_sq(), mv.to_sq(), bonus);
+                    for prev_mv in searched_quiets
+                        .iter()
+                        .take(searched_quiets.len().saturating_sub(1))
+                    {
+                        ctx.history_table
+                            .update(side, prev_mv.from_sq(), prev_mv.to_sq(), -bonus);
+                    }
                 }
                 break;
             }
@@ -412,6 +458,7 @@ pub fn search(
         nodes: 0,
         aborted: false,
         killers: KillerTable::new(),
+        history_table: HistoryTable::new(),
         pv_table: PvTable::new(),
         prev_pv: Vec::new(),
         stop_flag: limits.stop_flag,
@@ -479,6 +526,7 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -693,6 +741,7 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -718,6 +767,7 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -851,7 +901,7 @@ mod tests {
     #[test]
     fn tt_reduces_node_count() {
         let fen = "r1bqkb1r/pppppppp/2n2n2/8/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3";
-        let depth: u8 = 5;
+        let depth: u8 = 6;
 
         // Search with TT enabled (normal code path via iterative deepening)
         let mut pos_tt = Position::from_fen(fen).expect("valid fen");
@@ -861,6 +911,7 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -886,6 +937,7 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -931,6 +983,7 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -955,7 +1008,17 @@ mod tests {
 
         let mut moves = chess_movegen::generate_legal_moves(&mut pos);
         let killers = KillerTable::new();
-        ordering::order_moves(&mut moves, &pos, &killers, 0, None, Some(tt_move));
+        let history = HistoryTable::new();
+        ordering::order_moves(
+            &mut moves,
+            &pos,
+            &killers,
+            &history,
+            0,
+            None,
+            Some(tt_move),
+            Color::White,
+        );
 
         assert_eq!(moves[0], tt_move, "TT move should be ordered first");
     }
@@ -972,6 +1035,7 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -1015,6 +1079,7 @@ mod tests {
                 nodes: 0,
                 aborted: false,
                 killers: KillerTable::new(),
+                history_table: HistoryTable::new(),
                 pv_table: PvTable::new(),
                 prev_pv: Vec::new(),
                 stop_flag: None,
@@ -1039,7 +1104,17 @@ mod tests {
 
             let mut moves = chess_movegen::generate_legal_moves(&mut pos);
             let killers = KillerTable::new();
-            ordering::order_moves(&mut moves, &pos, &killers, 0, None, Some(tt_move));
+            let history = HistoryTable::new();
+            ordering::order_moves(
+                &mut moves,
+                &pos,
+                &killers,
+                &history,
+                0,
+                None,
+                Some(tt_move),
+                Color::White,
+            );
 
             assert_eq!(
                 moves[0], tt_move,
@@ -1072,6 +1147,7 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -1108,7 +1184,7 @@ mod tests {
     #[test]
     fn tt_move_ordering_reduces_nodes() {
         let fen = "r1bqkb1r/pppppppp/2n2n2/8/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3";
-        let depth: u8 = 5;
+        let depth: u8 = 6;
 
         // Search with TT enabled (1 MB TT — TT move ordering is effective)
         let mut pos_tt = Position::from_fen(fen).expect("valid fen");
@@ -1118,6 +1194,7 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -1143,6 +1220,7 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -1178,7 +1256,7 @@ mod tests {
     #[test]
     fn iid_reduces_node_count() {
         let fen = "r1bqkb1r/pppppppp/2n2n2/8/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3";
-        let depth: u8 = 5;
+        let depth: u8 = 6;
 
         // Search with 1 MB TT (IID populates TT effectively)
         let mut pos_iid = Position::from_fen(fen).expect("valid fen");
@@ -1188,6 +1266,7 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -1213,6 +1292,7 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -1256,6 +1336,7 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -1273,6 +1354,7 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -1306,6 +1388,7 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -1345,6 +1428,7 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -1416,6 +1500,7 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -1469,6 +1554,7 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -1490,6 +1576,7 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -1533,6 +1620,7 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -1554,6 +1642,7 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -1590,6 +1679,7 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -1610,6 +1700,7 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -1644,6 +1735,7 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -1664,6 +1756,7 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -1698,6 +1791,7 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -1718,6 +1812,7 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -1807,6 +1902,7 @@ mod tests {
                 nodes: 0,
                 aborted: false,
                 killers: KillerTable::new(),
+                history_table: HistoryTable::new(),
                 pv_table: PvTable::new(),
                 prev_pv: Vec::new(),
                 stop_flag: None,
@@ -1832,6 +1928,7 @@ mod tests {
                 nodes: 0,
                 aborted: false,
                 killers: KillerTable::new(),
+                history_table: HistoryTable::new(),
                 pv_table: PvTable::new(),
                 prev_pv: Vec::new(),
                 stop_flag: None,
@@ -1897,6 +1994,7 @@ mod tests {
                 nodes: 0,
                 aborted: false,
                 killers: KillerTable::new(),
+                history_table: HistoryTable::new(),
                 pv_table: PvTable::new(),
                 prev_pv: Vec::new(),
                 stop_flag: None,
@@ -1972,6 +2070,7 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -1996,6 +2095,7 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -2035,6 +2135,7 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -2064,6 +2165,7 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -2107,6 +2209,7 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -2141,6 +2244,7 @@ mod tests {
                 nodes: 0,
                 aborted: false,
                 killers: KillerTable::new(),
+                history_table: HistoryTable::new(),
                 pv_table: PvTable::new(),
                 prev_pv: Vec::new(),
                 stop_flag: None,
@@ -2177,6 +2281,7 @@ mod tests {
                 nodes: 0,
                 aborted: false,
                 killers: KillerTable::new(),
+                history_table: HistoryTable::new(),
                 pv_table: PvTable::new(),
                 prev_pv: Vec::new(),
                 stop_flag: None,
@@ -2205,6 +2310,7 @@ mod tests {
                 nodes: 0,
                 aborted: false,
                 killers: KillerTable::new(),
+                history_table: HistoryTable::new(),
                 pv_table: PvTable::new(),
                 prev_pv: Vec::new(),
                 stop_flag: None,
@@ -2304,6 +2410,7 @@ mod tests {
                 nodes: 0,
                 aborted: false,
                 killers: KillerTable::new(),
+                history_table: HistoryTable::new(),
                 pv_table: PvTable::new(),
                 prev_pv: Vec::new(),
                 stop_flag: None,
@@ -2338,6 +2445,7 @@ mod tests {
                 nodes: 0,
                 aborted: false,
                 killers: KillerTable::new(),
+                history_table: HistoryTable::new(),
                 pv_table: PvTable::new(),
                 prev_pv: Vec::new(),
                 stop_flag: None,
@@ -2389,6 +2497,7 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -2424,6 +2533,7 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -2457,6 +2567,7 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -2500,6 +2611,7 @@ mod tests {
                 nodes: 0,
                 aborted: false,
                 killers: KillerTable::new(),
+                history_table: HistoryTable::new(),
                 pv_table: PvTable::new(),
                 prev_pv: Vec::new(),
                 stop_flag: None,
@@ -2531,6 +2643,7 @@ mod tests {
                 nodes: 0,
                 aborted: false,
                 killers: KillerTable::new(),
+                history_table: HistoryTable::new(),
                 pv_table: PvTable::new(),
                 prev_pv: Vec::new(),
                 stop_flag: None,

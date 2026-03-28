@@ -1,11 +1,13 @@
 use chess_board::Position;
-use chess_types::Move;
+use chess_types::{Color, Move};
 
+use crate::history::HistoryTable;
 use crate::killer::KillerTable;
 
-const TT_SCORE: i32 = 200_000;
-const PV_SCORE: i32 = 100_000;
-const KILLER_SCORE: i32 = 50;
+const TT_SCORE: i32 = 300_000;
+const PV_SCORE: i32 = 200_000;
+const CAPTURE_BASE: i32 = 100_000;
+const KILLER_SCORE: i32 = 20_000;
 
 pub fn score_mvv_lva(mv: Move, pos: &Position) -> i32 {
     if !mv.is_capture() {
@@ -29,38 +31,44 @@ pub fn score_mvv_lva(mv: Move, pos: &Position) -> i32 {
         - chess_eval::material::piece_value(attacker_kind)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn score_move(
     mv: Move,
     pos: &Position,
     killers: &KillerTable,
+    history: &HistoryTable,
     ply: u8,
     pv_move: Option<Move>,
     tt_move: Option<Move>,
+    side: Color,
 ) -> i32 {
     if tt_move == Some(mv) {
         TT_SCORE
     } else if pv_move == Some(mv) {
         PV_SCORE
     } else if mv.is_capture() {
-        score_mvv_lva(mv, pos)
+        CAPTURE_BASE + score_mvv_lva(mv, pos)
     } else if killers.is_killer(ply, mv) {
         KILLER_SCORE
     } else {
-        0
+        history.score(side, mv.from_sq(), mv.to_sq())
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn order_moves(
     moves: &mut [Move],
     pos: &Position,
     killers: &KillerTable,
+    history: &HistoryTable,
     ply: u8,
     pv_move: Option<Move>,
     tt_move: Option<Move>,
+    side: Color,
 ) {
     moves.sort_unstable_by(|a, b| {
-        let sa = score_move(*a, pos, killers, ply, pv_move, tt_move);
-        let sb = score_move(*b, pos, killers, ply, pv_move, tt_move);
+        let sa = score_move(*a, pos, killers, history, ply, pv_move, tt_move, side);
+        let sb = score_move(*b, pos, killers, history, ply, pv_move, tt_move, side);
         sb.cmp(&sa)
     });
 }
@@ -68,6 +76,7 @@ pub fn order_moves(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::history::HistoryTable;
     use chess_board::Position;
 
     #[test]
@@ -131,8 +140,18 @@ mod tests {
         let mut pos = Position::from_fen("4k3/8/8/8/8/8/3q4/R3K3 w - - 0 1").expect("valid fen");
         let mut moves = chess_movegen::generate_legal_moves(&mut pos);
         let killers = KillerTable::new();
+        let history = HistoryTable::new();
 
-        order_moves(&mut moves, &pos, &killers, 0, None, None);
+        order_moves(
+            &mut moves,
+            &pos,
+            &killers,
+            &history,
+            0,
+            None,
+            None,
+            Color::White,
+        );
 
         let first_quiet_idx = moves.iter().position(|m| !m.is_capture());
         let last_capture_idx = moves.iter().rposition(|m| m.is_capture());
@@ -158,8 +177,18 @@ mod tests {
 
         let mut killers = KillerTable::new();
         killers.store(0, killer_mv);
+        let history = HistoryTable::new();
 
-        order_moves(&mut moves, &pos, &killers, 0, None, None);
+        order_moves(
+            &mut moves,
+            &pos,
+            &killers,
+            &history,
+            0,
+            None,
+            None,
+            Color::White,
+        );
 
         let killer_idx = moves
             .iter()
@@ -197,7 +226,17 @@ mod tests {
             .expect("there must be a quiet move");
 
         let killers = KillerTable::new();
-        order_moves(&mut moves, &pos, &killers, 0, Some(pv_mv), None);
+        let history = HistoryTable::new();
+        order_moves(
+            &mut moves,
+            &pos,
+            &killers,
+            &history,
+            0,
+            Some(pv_mv),
+            None,
+            Color::White,
+        );
 
         assert_eq!(moves[0], pv_mv, "PV move should be at index 0");
     }
@@ -215,7 +254,17 @@ mod tests {
         let tt_mv = quiet_moves[1];
 
         let killers = KillerTable::new();
-        order_moves(&mut moves, &pos, &killers, 0, Some(pv_mv), Some(tt_mv));
+        let history = HistoryTable::new();
+        order_moves(
+            &mut moves,
+            &pos,
+            &killers,
+            &history,
+            0,
+            Some(pv_mv),
+            Some(tt_mv),
+            Color::White,
+        );
 
         assert_eq!(moves[0], tt_mv, "TT move should be at index 0");
         assert_eq!(moves[1], pv_mv, "PV move should be at index 1");

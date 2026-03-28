@@ -14,6 +14,7 @@
     "autoCommit": true,
     "autoPR": true
   },
+  "timeoutMs": 1800000,
   "preflight": {
     "enabled": true,
     "commands": ["cargo fmt --check", "cargo clippy -- -D warnings", "cargo test"]
