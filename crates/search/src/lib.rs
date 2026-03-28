@@ -356,7 +356,17 @@ pub fn negamax(
     // Internal iterative deepening: if no TT move and depth is sufficient,
     // do a reduced-depth search to populate the TT with a move for ordering.
     if tt_move.is_none() && depth as i32 >= IID_MIN_DEPTH {
-        negamax(pos, depth - 2, alpha, beta, ply, false, ctx, prev_move, None);
+        negamax(
+            pos,
+            depth - 2,
+            alpha,
+            beta,
+            ply,
+            false,
+            ctx,
+            prev_move,
+            None,
+        );
         if let Some(entry) = ctx.tt.probe(hash) {
             if let Some(iid_move) = entry.best_move() {
                 if moves.contains(&iid_move) {
@@ -473,6 +483,7 @@ pub fn negamax(
             } else {
                 0
             };
+            // Stage 1: reduced-depth zero-window search
             let (s, _) = negamax(
                 pos,
                 reduced_depth,
@@ -486,7 +497,68 @@ pub fn negamax(
             );
             score = -s;
 
+            // Stage 2: full-depth zero-window re-search (on fail-high)
             if score > alpha {
+                let (s2, _) = negamax(
+                    pos,
+                    depth - 1,
+                    -alpha - 1,
+                    -alpha,
+                    ply + 1,
+                    true,
+                    ctx,
+                    Some((piece_kind, mv)),
+                    None,
+                );
+                score = -s2;
+            }
+
+            // Stage 3: full-depth full-window re-search (on fail-high again)
+            if score > alpha && score < beta {
+                let (s3, _) = negamax(
+                    pos,
+                    depth - 1,
+                    -beta,
+                    -alpha,
+                    ply + 1,
+                    true,
+                    ctx,
+                    Some((piece_kind, mv)),
+                    None,
+                );
+                score = -s3;
+            }
+        } else if moves_searched == 0 {
+            // PVS: first move gets full window
+            let (s, _) = negamax(
+                pos,
+                depth - 1,
+                -beta,
+                -alpha,
+                ply + 1,
+                true,
+                ctx,
+                Some((piece_kind, mv)),
+                None,
+            );
+            score = -s;
+        } else {
+            // PVS: subsequent moves get zero-window
+            let (s, _) = negamax(
+                pos,
+                depth - 1,
+                -alpha - 1,
+                -alpha,
+                ply + 1,
+                true,
+                ctx,
+                Some((piece_kind, mv)),
+                None,
+            );
+            score = -s;
+
+            // Re-search with full window on fail-high (score > alpha && score < beta)
+            if score > alpha && score < beta {
                 let (s2, _) = negamax(
                     pos,
                     depth - 1,
@@ -500,19 +572,6 @@ pub fn negamax(
                 );
                 score = -s2;
             }
-        } else {
-            let (s, _) = negamax(
-                pos,
-                depth - 1,
-                -beta,
-                -alpha,
-                ply + 1,
-                true,
-                ctx,
-                Some((piece_kind, mv)),
-                None,
-            );
-            score = -s;
         }
 
         ctx.history.pop();
@@ -609,7 +668,9 @@ pub fn search(
     loop {
         ctx.aborted = false;
         ctx.pv_table.clear();
-        let (score, mv) = negamax(pos, depth, -INFINITY, INFINITY, 0, true, &mut ctx, None, None);
+        let (score, mv) = negamax(
+            pos, depth, -INFINITY, INFINITY, 0, true, &mut ctx, None, None,
+        );
 
         if ctx.aborted {
             break;
@@ -678,7 +739,9 @@ mod tests {
             Position::from_fen("rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3")
                 .expect("valid fen");
         let mut ctx = test_ctx();
-        let (score, mv) = negamax(&mut pos, 1, -INFINITY, INFINITY, 0, true, &mut ctx, None, None);
+        let (score, mv) = negamax(
+            &mut pos, 1, -INFINITY, INFINITY, 0, true, &mut ctx, None, None,
+        );
         assert_eq!(score, -MATE_SCORE);
         assert!(mv.is_none());
     }
@@ -689,7 +752,9 @@ mod tests {
             Position::from_fen("rnb1kbnr/pppp1ppp/4p3/8/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 0 3")
                 .expect("valid fen");
         let mut ctx = test_ctx();
-        let (score, mv) = negamax(&mut pos, 1, -INFINITY, INFINITY, 0, true, &mut ctx, None, None);
+        let (score, mv) = negamax(
+            &mut pos, 1, -INFINITY, INFINITY, 0, true, &mut ctx, None, None,
+        );
         assert_eq!(score, -MATE_SCORE);
         assert!(mv.is_none());
     }
@@ -698,7 +763,9 @@ mod tests {
     fn stalemate_returns_zero() {
         let mut pos = Position::from_fen("k7/1R6/K7/8/8/8/8/8 b - - 0 1").expect("valid fen");
         let mut ctx = test_ctx();
-        let (score, mv) = negamax(&mut pos, 1, -INFINITY, INFINITY, 0, true, &mut ctx, None, None);
+        let (score, mv) = negamax(
+            &mut pos, 1, -INFINITY, INFINITY, 0, true, &mut ctx, None, None,
+        );
         assert_eq!(score, 0);
         assert!(mv.is_none());
     }
@@ -707,7 +774,9 @@ mod tests {
     fn returns_legal_move_at_depth() {
         let mut pos = Position::startpos();
         let mut ctx = test_ctx();
-        let (_, mv) = negamax(&mut pos, 1, -INFINITY, INFINITY, 0, true, &mut ctx, None, None);
+        let (_, mv) = negamax(
+            &mut pos, 1, -INFINITY, INFINITY, 0, true, &mut ctx, None, None,
+        );
         assert!(mv.is_some());
         let legal_moves = chess_movegen::generate_legal_moves(&mut pos);
         let best = mv.unwrap();
@@ -718,7 +787,9 @@ mod tests {
     fn prefers_capture_of_free_piece() {
         let mut pos = Position::from_fen("4k3/8/8/8/8/8/3q4/R3K3 w - - 0 1").expect("valid fen");
         let mut ctx = test_ctx();
-        let (score, mv) = negamax(&mut pos, 1, -INFINITY, INFINITY, 0, true, &mut ctx, None, None);
+        let (score, mv) = negamax(
+            &mut pos, 1, -INFINITY, INFINITY, 0, true, &mut ctx, None, None,
+        );
         assert!(score > 0);
         assert!(mv.is_some());
         assert!(mv.unwrap().is_capture());
@@ -728,7 +799,9 @@ mod tests {
     fn alpha_beta_prunes() {
         let mut pos = Position::startpos();
         let mut ctx = test_ctx();
-        let (_, mv) = negamax(&mut pos, 3, -INFINITY, INFINITY, 0, true, &mut ctx, None, None);
+        let (_, mv) = negamax(
+            &mut pos, 3, -INFINITY, INFINITY, 0, true, &mut ctx, None, None,
+        );
         assert!(mv.is_some());
     }
 
@@ -753,7 +826,9 @@ mod tests {
     fn negamax_uses_quiescence_for_tactics() {
         let mut pos = Position::from_fen("4k3/8/8/R2b4/8/8/8/4K3 w - - 0 1").expect("valid fen");
         let mut ctx = test_ctx();
-        let (score, mv) = negamax(&mut pos, 1, -INFINITY, INFINITY, 0, true, &mut ctx, None, None);
+        let (score, mv) = negamax(
+            &mut pos, 1, -INFINITY, INFINITY, 0, true, &mut ctx, None, None,
+        );
         assert!(score > 0);
         assert!(mv.is_some());
         assert!(mv.unwrap().is_capture());
@@ -858,7 +933,9 @@ mod tests {
     fn node_counter_increments() {
         let mut pos = Position::startpos();
         let mut ctx = test_ctx();
-        negamax(&mut pos, 2, -INFINITY, INFINITY, 0, true, &mut ctx, None, None);
+        negamax(
+            &mut pos, 2, -INFINITY, INFINITY, 0, true, &mut ctx, None, None,
+        );
         assert!(ctx.nodes > 0);
     }
 
@@ -1169,7 +1246,9 @@ mod tests {
         ctx.tt.new_generation();
         for d in 1..=4u8 {
             ctx.pv_table.clear();
-            negamax(&mut pos, d, -INFINITY, INFINITY, 0, true, &mut ctx, None, None);
+            negamax(
+                &mut pos, d, -INFINITY, INFINITY, 0, true, &mut ctx, None, None,
+            );
             ctx.prev_pv = ctx.pv_table.extract_pv();
         }
 
@@ -1225,7 +1304,9 @@ mod tests {
             singular_extension_enabled: true,
         };
         ctx.tt.new_generation();
-        let (score, mv) = negamax(&mut pos, 4, -INFINITY, INFINITY, 0, true, &mut ctx, None, None);
+        let (score, mv) = negamax(
+            &mut pos, 4, -INFINITY, INFINITY, 0, true, &mut ctx, None, None,
+        );
 
         assert!(mv.is_some(), "should find a mating move");
         // Mate in 1 = 1 ply from root
@@ -1274,7 +1355,9 @@ mod tests {
             ctx.tt.new_generation();
             for d in 1..=4u8 {
                 ctx.pv_table.clear();
-                negamax(&mut pos, d, -INFINITY, INFINITY, 0, true, &mut ctx, None, None);
+                negamax(
+                    &mut pos, d, -INFINITY, INFINITY, 0, true, &mut ctx, None, None,
+                );
                 ctx.prev_pv = ctx.pv_table.extract_pv();
             }
 
@@ -1359,7 +1442,9 @@ mod tests {
         ctx.tt.store(hash, entry);
 
         // Run negamax — should not crash and should return a valid move
-        let (score, mv) = negamax(&mut pos, 3, -INFINITY, INFINITY, 0, true, &mut ctx, None, None);
+        let (score, mv) = negamax(
+            &mut pos, 3, -INFINITY, INFINITY, 0, true, &mut ctx, None, None,
+        );
         assert!(mv.is_some(), "negamax should return a valid move");
         let best = mv.unwrap();
         let legal_after = chess_movegen::generate_legal_moves(&mut pos);
@@ -1637,7 +1722,9 @@ mod tests {
         };
         ctx.tt.new_generation();
 
-        let (_, mv) = negamax(&mut pos, 5, -INFINITY, INFINITY, 0, true, &mut ctx, None, None);
+        let (_, mv) = negamax(
+            &mut pos, 5, -INFINITY, INFINITY, 0, true, &mut ctx, None, None,
+        );
 
         let entry = ctx
             .tt
@@ -1681,7 +1768,9 @@ mod tests {
         ctx.tt.new_generation();
 
         // At ply=1, the repetition check sees current_hash in history and returns (0, None)
-        let (score, mv) = negamax(&mut pos, 4, -INFINITY, INFINITY, 1, true, &mut ctx, None, None);
+        let (score, mv) = negamax(
+            &mut pos, 4, -INFINITY, INFINITY, 1, true, &mut ctx, None, None,
+        );
 
         assert_eq!(score, 0, "threefold repetition should yield draw score 0");
         assert!(mv.is_none(), "repeated position should return no move");
@@ -1696,7 +1785,9 @@ mod tests {
         let mut ctx = test_ctx();
         ctx.tt.new_generation();
 
-        let (score, _) = negamax(&mut pos, 2, -INFINITY, INFINITY, 0, true, &mut ctx, None, None);
+        let (score, _) = negamax(
+            &mut pos, 2, -INFINITY, INFINITY, 0, true, &mut ctx, None, None,
+        );
 
         assert_eq!(
             score, 0,
@@ -1756,7 +1847,9 @@ mod tests {
         ctx.tt.new_generation();
         ctx.history.push(pos2.hash());
 
-        let (score, _) = negamax(&mut pos2, 4, -INFINITY, INFINITY, 0, true, &mut ctx, None, None);
+        let (score, _) = negamax(
+            &mut pos2, 4, -INFINITY, INFINITY, 0, true, &mut ctx, None, None,
+        );
 
         assert!(
             score > 0,
@@ -1812,8 +1905,9 @@ mod tests {
         };
         ctx.tt.new_generation();
 
-        let (score_with_history, _) =
-            negamax(&mut pos, 4, -INFINITY, INFINITY, 0, true, &mut ctx, None, None);
+        let (score_with_history, _) = negamax(
+            &mut pos, 4, -INFINITY, INFINITY, 0, true, &mut ctx, None, None,
+        );
 
         // Search without repetition history for comparison
         let mut pos2 = Position::from_fen(fen).expect("valid fen");
@@ -1838,8 +1932,9 @@ mod tests {
         };
         ctx2.tt.new_generation();
 
-        let (score_without_history, _) =
-            negamax(&mut pos2, 4, -INFINITY, INFINITY, 0, true, &mut ctx2, None, None);
+        let (score_without_history, _) = negamax(
+            &mut pos2, 4, -INFINITY, INFINITY, 0, true, &mut ctx2, None, None,
+        );
 
         // With repetition available, the losing side should get a better (higher) score
         // because it can aim for a draw (score 0) instead of a deeply negative score.
@@ -1884,7 +1979,17 @@ mod tests {
             singular_extension_enabled: true,
         };
         ctx_nmp.tt.new_generation();
-        negamax(&mut pos_nmp, depth, 0, 100, 1, true, &mut ctx_nmp, None, None);
+        negamax(
+            &mut pos_nmp,
+            depth,
+            0,
+            100,
+            1,
+            true,
+            &mut ctx_nmp,
+            None,
+            None,
+        );
         let nodes_with_nmp = ctx_nmp.nodes;
 
         // Search with NMP disabled at this node
@@ -2503,6 +2608,7 @@ mod tests {
             true,
             &mut ctx_on,
             None,
+            None,
         );
         let nodes_on = ctx_on.nodes;
 
@@ -2536,6 +2642,7 @@ mod tests {
             0,
             true,
             &mut ctx_off,
+            None,
             None,
         );
         let nodes_off = ctx_off.nodes;
@@ -2591,6 +2698,7 @@ mod tests {
                 true,
                 &mut ctx_on,
                 None,
+                None,
             );
             let nodes_on = ctx_on.nodes;
 
@@ -2612,6 +2720,7 @@ mod tests {
                 lmr_enabled: true,
                 futility_enabled: false,
                 check_extension_enabled: false,
+                singular_extension_enabled: true,
             };
             ctx_off.tt.new_generation();
             negamax(
@@ -2622,6 +2731,7 @@ mod tests {
                 0,
                 true,
                 &mut ctx_off,
+                None,
                 None,
             );
             let nodes_off = ctx_off.nodes;
@@ -2652,6 +2762,7 @@ mod tests {
                 lmr_enabled: true,
                 futility_enabled: true,
                 check_extension_enabled: false,
+                singular_extension_enabled: true,
             };
             ctx_on2.tt.new_generation();
             negamax(
@@ -2662,6 +2773,7 @@ mod tests {
                 0,
                 true,
                 &mut ctx_on2,
+                None,
                 None,
             );
             let nodes_on2 = ctx_on2.nodes;
@@ -2684,6 +2796,7 @@ mod tests {
                 lmr_enabled: true,
                 futility_enabled: false,
                 check_extension_enabled: false,
+                singular_extension_enabled: true,
             };
             ctx_off2.tt.new_generation();
             negamax(
@@ -2694,6 +2807,7 @@ mod tests {
                 0,
                 true,
                 &mut ctx_off2,
+                None,
                 None,
             );
             let nodes_off2 = ctx_off2.nodes;
@@ -2803,6 +2917,7 @@ mod tests {
                     true,
                     &mut ctx_on,
                     None,
+                    None,
                 );
                 ctx_on.prev_pv = ctx_on.pv_table.extract_pv();
                 if mv.is_some() {
@@ -2849,6 +2964,7 @@ mod tests {
                     0,
                     true,
                     &mut ctx_off,
+                    None,
                     None,
                 );
                 ctx_off.prev_pv = ctx_off.pv_table.extract_pv();
@@ -2905,7 +3021,9 @@ mod tests {
         let mut best_all = None;
         for d in 1..=depth {
             ctx.pv_table.clear();
-            let (_, mv) = negamax(&mut pos, d, -INFINITY, INFINITY, 0, true, &mut ctx, None);
+            let (_, mv) = negamax(
+                &mut pos, d, -INFINITY, INFINITY, 0, true, &mut ctx, None, None,
+            );
             ctx.prev_pv = ctx.pv_table.extract_pv();
             if mv.is_some() {
                 best_all = mv;
@@ -2944,7 +3062,9 @@ mod tests {
         let mut best_no_fut = None;
         for d in 1..=depth {
             ctx2.pv_table.clear();
-            let (_, mv) = negamax(&mut pos2, d, -INFINITY, INFINITY, 0, true, &mut ctx2, None);
+            let (_, mv) = negamax(
+                &mut pos2, d, -INFINITY, INFINITY, 0, true, &mut ctx2, None, None,
+            );
             ctx2.prev_pv = ctx2.pv_table.extract_pv();
             if mv.is_some() {
                 best_no_fut = mv;
@@ -2981,7 +3101,9 @@ mod tests {
         let mut best_no_lmr = None;
         for d in 1..=depth {
             ctx3.pv_table.clear();
-            let (_, mv) = negamax(&mut pos3, d, -INFINITY, INFINITY, 0, true, &mut ctx3, None);
+            let (_, mv) = negamax(
+                &mut pos3, d, -INFINITY, INFINITY, 0, true, &mut ctx3, None, None,
+            );
             ctx3.prev_pv = ctx3.pv_table.extract_pv();
             if mv.is_some() {
                 best_no_lmr = mv;
@@ -3140,6 +3262,7 @@ mod tests {
             true,
             &mut ctx_on,
             None,
+            None,
         );
         let nodes_on = ctx_on.nodes;
 
@@ -3172,6 +3295,7 @@ mod tests {
             0,
             true,
             &mut ctx_off,
+            None,
             None,
         );
         let nodes_off = ctx_off.nodes;
@@ -3216,6 +3340,7 @@ mod tests {
             true,
             &mut ctx_on,
             None,
+            None,
         );
         let nodes_on = ctx_on.nodes;
 
@@ -3248,6 +3373,7 @@ mod tests {
             0,
             true,
             &mut ctx_off,
+            None,
             None,
         );
         let nodes_off = ctx_off.nodes;
@@ -3316,6 +3442,7 @@ mod tests {
                     true,
                     &mut ctx_on,
                     None,
+                    None,
                 );
                 ctx_on.prev_pv = ctx_on.pv_table.extract_pv();
                 if mv.is_some() {
@@ -3346,6 +3473,7 @@ mod tests {
                 lmr_enabled: true,
                 futility_enabled: true,
                 check_extension_enabled: false,
+                singular_extension_enabled: true,
             };
             ctx_off.tt.new_generation();
             ctx_off.history.push(pos_off.hash());
@@ -3360,6 +3488,7 @@ mod tests {
                     0,
                     true,
                     &mut ctx_off,
+                    None,
                     None,
                 );
                 ctx_off.prev_pv = ctx_off.pv_table.extract_pv();
@@ -3380,5 +3509,261 @@ mod tests {
             correct_on,
             correct_off
         );
+    }
+
+    #[test]
+    fn pvs_finds_same_or_better_move_on_wac() {
+        let wac_positions = [
+            (
+                "2rr3k/pp3pp1/1nnqbN1p/3pN3/2pP4/2P3Q1/PPB4P/R4RK1 w - - 0 1",
+                vec![Square::G6],
+            ),
+            (
+                "r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4",
+                vec![Square::F7],
+            ),
+            ("6k1/5ppp/8/8/8/8/8/3Q1RK1 w - - 0 1", vec![Square::D8]),
+            (
+                "r1bqkb1r/pppp1ppp/2n2n2/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4",
+                vec![Square::G5, Square::D5],
+            ),
+        ];
+
+        let depth: u8 = 6;
+        let mut correct = 0;
+
+        for (fen, expected_targets) in &wac_positions {
+            let mut pos = Position::from_fen(fen).expect("valid fen");
+            let mut ctx = SearchContext {
+                start: Instant::now(),
+                time_budget: Duration::from_secs(10),
+                nodes: 0,
+                aborted: false,
+                killers: KillerTable::new(),
+                history_table: HistoryTable::new(),
+                countermove_table: CounterMoveTable::new(),
+                pv_table: PvTable::new(),
+                prev_pv: Vec::new(),
+                stop_flag: None,
+                max_nodes: None,
+                tt: TranspositionTable::new(16),
+                history: Vec::new(),
+                lmr_enabled: true,
+                futility_enabled: true,
+                check_extension_enabled: true,
+                singular_extension_enabled: true,
+            };
+            ctx.tt.new_generation();
+            ctx.history.push(pos.hash());
+            let mut best_mv = None;
+            for d in 1..=depth {
+                ctx.pv_table.clear();
+                let (_, mv) = negamax(
+                    &mut pos, d, -INFINITY, INFINITY, 0, true, &mut ctx, None, None,
+                );
+                ctx.prev_pv = ctx.pv_table.extract_pv();
+                if mv.is_some() {
+                    best_mv = mv;
+                }
+            }
+            if let Some(m) = best_mv {
+                if expected_targets.contains(&m.to_sq()) {
+                    correct += 1;
+                }
+            }
+        }
+
+        assert!(
+            correct >= 3,
+            "PVS should solve at least 3 of 4 WAC positions, solved {}",
+            correct
+        );
+    }
+
+    #[test]
+    fn pvs_zero_window_reduces_nodes() {
+        let positions = [
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+            "r1bqkb1r/pppppppp/2n2n2/8/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3",
+            "r1bqkbnr/pppppppp/2n5/8/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 1 2",
+        ];
+        let depth: u8 = 8;
+        // Ceiling derived from measured PVS node counts with 25% margin for non-determinism.
+        // Measured: startpos=199758, pos2=114181, pos3=123721. Max=199758.
+        let baseline_ceiling: u64 = 250_000;
+
+        for fen in positions {
+            let mut pos = Position::from_fen(fen).expect("valid fen");
+            let mut ctx = SearchContext {
+                start: Instant::now(),
+                time_budget: Duration::from_secs(60),
+                nodes: 0,
+                aborted: false,
+                killers: KillerTable::new(),
+                history_table: HistoryTable::new(),
+                countermove_table: CounterMoveTable::new(),
+                pv_table: PvTable::new(),
+                prev_pv: Vec::new(),
+                stop_flag: None,
+                max_nodes: None,
+                tt: TranspositionTable::new(16),
+                history: Vec::new(),
+                lmr_enabled: true,
+                futility_enabled: true,
+                check_extension_enabled: true,
+                singular_extension_enabled: true,
+            };
+            ctx.tt.new_generation();
+            ctx.history.push(pos.hash());
+            for d in 1..=depth {
+                ctx.pv_table.clear();
+                negamax(
+                    &mut pos, d, -INFINITY, INFINITY, 0, true, &mut ctx, None, None,
+                );
+                ctx.prev_pv = ctx.pv_table.extract_pv();
+            }
+            let pvs_nodes = ctx.nodes;
+
+            assert!(
+                pvs_nodes <= baseline_ceiling,
+                "PVS should search at or below baseline for {}: {} nodes vs {} ceiling",
+                fen,
+                pvs_nodes,
+                baseline_ceiling,
+            );
+        }
+    }
+
+    #[test]
+    fn pvs_lmr_cascade_correctness() {
+        let positions = [
+            (
+                "r1bqkb1r/pppp1ppp/2n2n2/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4",
+                vec![Square::G5, Square::D5, Square::D3, Square::C3],
+            ),
+            (
+                "r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4",
+                vec![Square::F7],
+            ),
+        ];
+        let depth: u8 = 7;
+
+        for (fen, expected_targets) in &positions {
+            let mut pos_lmr = Position::from_fen(fen).expect("valid fen");
+            let mut ctx_lmr = SearchContext {
+                start: Instant::now(),
+                time_budget: Duration::from_secs(30),
+                nodes: 0,
+                aborted: false,
+                killers: KillerTable::new(),
+                history_table: HistoryTable::new(),
+                countermove_table: CounterMoveTable::new(),
+                pv_table: PvTable::new(),
+                prev_pv: Vec::new(),
+                stop_flag: None,
+                max_nodes: None,
+                tt: TranspositionTable::new(16),
+                history: Vec::new(),
+                lmr_enabled: true,
+                futility_enabled: true,
+                check_extension_enabled: true,
+                singular_extension_enabled: true,
+            };
+            ctx_lmr.tt.new_generation();
+            ctx_lmr.history.push(pos_lmr.hash());
+            let mut best_lmr = None;
+            for d in 1..=depth {
+                ctx_lmr.pv_table.clear();
+                let (_, mv) = negamax(
+                    &mut pos_lmr,
+                    d,
+                    -INFINITY,
+                    INFINITY,
+                    0,
+                    true,
+                    &mut ctx_lmr,
+                    None,
+                    None,
+                );
+                ctx_lmr.prev_pv = ctx_lmr.pv_table.extract_pv();
+                if mv.is_some() {
+                    best_lmr = mv;
+                }
+            }
+            let nodes_with_lmr = ctx_lmr.nodes;
+
+            let mut pos_no_lmr = Position::from_fen(fen).expect("valid fen");
+            let mut ctx_no_lmr = SearchContext {
+                start: Instant::now(),
+                time_budget: Duration::from_secs(30),
+                nodes: 0,
+                aborted: false,
+                killers: KillerTable::new(),
+                history_table: HistoryTable::new(),
+                countermove_table: CounterMoveTable::new(),
+                pv_table: PvTable::new(),
+                prev_pv: Vec::new(),
+                stop_flag: None,
+                max_nodes: None,
+                tt: TranspositionTable::new(16),
+                history: Vec::new(),
+                lmr_enabled: false,
+                futility_enabled: true,
+                check_extension_enabled: true,
+                singular_extension_enabled: true,
+            };
+            ctx_no_lmr.tt.new_generation();
+            ctx_no_lmr.history.push(pos_no_lmr.hash());
+            let mut best_no_lmr = None;
+            for d in 1..=depth {
+                ctx_no_lmr.pv_table.clear();
+                let (_, mv) = negamax(
+                    &mut pos_no_lmr,
+                    d,
+                    -INFINITY,
+                    INFINITY,
+                    0,
+                    true,
+                    &mut ctx_no_lmr,
+                    None,
+                    None,
+                );
+                ctx_no_lmr.prev_pv = ctx_no_lmr.pv_table.extract_pv();
+                if mv.is_some() {
+                    best_no_lmr = mv;
+                }
+            }
+            let nodes_without_lmr = ctx_no_lmr.nodes;
+
+            if let Some(m) = best_lmr {
+                assert!(
+                    expected_targets.contains(&m.to_sq()),
+                    "PVS+LMR should find expected move for FEN: {}, got to_sq {:?}",
+                    fen,
+                    m.to_sq()
+                );
+            } else {
+                panic!("PVS+LMR should find a move for FEN: {}", fen);
+            }
+
+            if let Some(m) = best_no_lmr {
+                assert!(
+                    expected_targets.contains(&m.to_sq()),
+                    "PVS-only should find expected move for FEN: {}, got to_sq {:?}",
+                    fen,
+                    m.to_sq()
+                );
+            } else {
+                panic!("PVS-only should find a move for FEN: {}", fen);
+            }
+
+            assert!(
+                nodes_with_lmr <= nodes_without_lmr,
+                "PVS+LMR should search <= nodes than PVS alone for FEN: {} ({} vs {})",
+                fen,
+                nodes_with_lmr,
+                nodes_without_lmr,
+            );
+        }
     }
 }
