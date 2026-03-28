@@ -12,6 +12,7 @@ const ENGINE_AUTHOR: &str = "Theodhor";
 
 struct EngineState {
     position: Position,
+    game_history: Vec<u64>,
     search_handle: Option<JoinHandle<Option<Move>>>,
     stop_flag: Arc<AtomicBool>,
     pondering: bool,
@@ -70,6 +71,7 @@ fn stop_search(state: &mut EngineState) {
 fn main() -> anyhow::Result<()> {
     let mut state = EngineState {
         position: Position::startpos(),
+        game_history: vec![Position::startpos().hash()],
         search_handle: None,
         stop_flag: Arc::new(AtomicBool::new(false)),
         pondering: false,
@@ -101,6 +103,7 @@ fn main() -> anyhow::Result<()> {
             chess_uci::UciCommand::UciNewGame => {
                 stop_search(&mut state);
                 state.position = Position::startpos();
+                state.game_history = vec![Position::startpos().hash()];
             }
             chess_uci::UciCommand::Position { fen, moves } => {
                 let mut pos = if let Some(fen_str) = fen {
@@ -111,12 +114,15 @@ fn main() -> anyhow::Result<()> {
                 } else {
                     Position::startpos()
                 };
+                let mut game_history: Vec<u64> = vec![pos.hash()];
                 for move_str in &moves {
                     if let Some(mv) = parse_uci_move(&mut pos, move_str) {
                         let _ = pos.make_move(mv);
+                        game_history.push(pos.hash());
                     }
                 }
                 state.position = pos;
+                state.game_history = game_history;
             }
             chess_uci::UciCommand::Go(params) => {
                 stop_search(&mut state);
@@ -179,10 +185,12 @@ fn main() -> anyhow::Result<()> {
                 };
 
                 let mut search_pos = state.position.clone();
+                let game_history = state.game_history.clone();
                 state.search_handle = Some(std::thread::spawn(move || {
                     let result = chess_search::search(
                         &mut search_pos,
                         limits,
+                        &game_history,
                         Some(&|depth, score, nodes, elapsed, pv| {
                             let time_ms = elapsed.as_millis() as u64;
                             let nps = if time_ms > 0 {
