@@ -33,7 +33,7 @@ const fn init_king_attacks() -> [Bitboard; 64] {
     table
 }
 
-const KING_ATTACKS: [Bitboard; 64] = init_king_attacks();
+pub const KING_ATTACKS: [Bitboard; 64] = init_king_attacks();
 
 pub fn generate_king_moves(pos: &Position, moves: &mut Vec<Move>) {
     let us = pos.side_to_move();

@@ -3,6 +3,7 @@ pub mod history;
 pub mod killer;
 pub mod ordering;
 pub mod pv_table;
+pub mod see;
 pub mod tt;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -351,13 +352,21 @@ pub fn negamax(
             .piece_on(mv.from_sq())
             .expect("piece must exist on from_sq")
             .kind;
+
+        let is_tactical = mv.is_capture() || mv.is_promotion();
+
+        let see_score = if mv.is_capture() && !mv.is_promotion() {
+            see::see(pos, mv)
+        } else {
+            0
+        };
+
         let undo = pos.make_move(mv);
         ctx.history.push(pos.hash());
 
         let is_tt_move = tt_move == Some(mv);
         let is_pv_move = pv_move == Some(mv);
         let is_killer = ctx.killers.is_killer(ply, mv);
-        let is_tactical = mv.is_capture() || mv.is_promotion();
 
         let gives_check = {
             let opp_king_sq = king_square(pos, pos.side_to_move());
@@ -378,6 +387,20 @@ pub fn negamax(
                 pos.unmake_move(mv, undo);
                 continue;
             }
+        }
+
+        if mv.is_capture()
+            && !mv.is_promotion()
+            && !in_check
+            && !gives_check
+            && !is_tt_move
+            && !is_pv_move
+            && depth <= 3
+            && see_score < 0
+        {
+            ctx.history.pop();
+            pos.unmake_move(mv, undo);
+            continue;
         }
 
         let do_lmr = ctx.lmr_enabled

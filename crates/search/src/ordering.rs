@@ -4,12 +4,14 @@ use chess_types::{Color, Move, PieceKind};
 use crate::countermove::CounterMoveTable;
 use crate::history::HistoryTable;
 use crate::killer::KillerTable;
+use crate::see;
 
 const TT_SCORE: i32 = 300_000;
 const PV_SCORE: i32 = 200_000;
 const CAPTURE_BASE: i32 = 100_000;
 const KILLER_SCORE: i32 = 20_000;
 const COUNTER_MOVE_SCORE: i32 = 15_000;
+const BAD_CAPTURE_BASE: i32 = -20_000;
 
 pub fn score_mvv_lva(mv: Move, pos: &Position) -> i32 {
     if !mv.is_capture() {
@@ -52,7 +54,12 @@ fn score_move(
     } else if pv_move == Some(mv) {
         PV_SCORE
     } else if mv.is_capture() {
-        CAPTURE_BASE + score_mvv_lva(mv, pos)
+        let see_score = see::see(pos, mv);
+        if see_score >= 0 {
+            CAPTURE_BASE + score_mvv_lva(mv, pos)
+        } else {
+            BAD_CAPTURE_BASE + see_score
+        }
     } else if killers.is_killer(ply, mv) {
         KILLER_SCORE
     } else if let (Some(pm_piece), Some(pm)) = (prev_piece, prev_move) {
