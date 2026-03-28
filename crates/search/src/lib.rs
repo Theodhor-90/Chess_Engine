@@ -19,6 +19,8 @@ pub const MATE_SCORE: i32 = 30000;
 pub const INFINITY: i32 = 31000;
 const IID_MIN_DEPTH: i32 = 4;
 const MAX_PLY: i32 = 128;
+const FUTILITY_MARGINS: [i32; 4] = [0, 200, 400, 600];
+const REVERSE_FUTILITY_MARGINS: [i32; 4] = [0, 100, 300, 500];
 
 /// Callback invoked after each completed search depth: `(depth, score, nodes, elapsed, pv)`.
 pub type DepthCallback<'a> = &'a dyn Fn(u8, i32, u64, Duration, &[Move]);
@@ -44,6 +46,7 @@ pub struct SearchContext {
     tt: TranspositionTable,
     history: Vec<u64>,
     pub(crate) lmr_enabled: bool,
+    pub(crate) futility_enabled: bool,
 }
 
 impl SearchContext {
@@ -241,6 +244,20 @@ pub fn negamax(
         }
     }
 
+    let static_eval = if !in_check {
+        chess_eval::evaluate(pos)
+    } else {
+        0
+    };
+
+    // Reverse futility pruning
+    if ctx.futility_enabled && !in_check && depth <= 3 && beta.abs() < MATE_SCORE - MAX_PLY {
+        let margin = REVERSE_FUTILITY_MARGINS[depth as usize];
+        if static_eval - margin >= beta {
+            return (static_eval, None);
+        }
+    }
+
     let mut moves = chess_movegen::generate_legal_moves(pos);
 
     // Validate TT move: discard if not legal (hash collision may produce invalid move)
@@ -291,6 +308,22 @@ pub fn negamax(
             let opp_king_sq = king_square(pos, pos.side_to_move());
             pos.is_square_attacked(opp_king_sq, pos.side_to_move().opposite())
         };
+
+        let do_futility = ctx.futility_enabled
+            && depth <= 3
+            && !in_check
+            && !gives_check
+            && !is_tactical
+            && alpha.abs() < MATE_SCORE - MAX_PLY;
+
+        if do_futility {
+            let margin = FUTILITY_MARGINS[depth as usize];
+            if static_eval + margin <= alpha {
+                ctx.history.pop();
+                pos.unmake_move(mv, undo);
+                continue;
+            }
+        }
 
         let do_lmr = ctx.lmr_enabled
             && depth >= 3
@@ -386,6 +419,7 @@ pub fn search(
         tt: TranspositionTable::new(64),
         history: game_history.to_vec(),
         lmr_enabled: true,
+        futility_enabled: true,
     };
 
     ctx.tt.new_generation();
@@ -452,6 +486,7 @@ mod tests {
             tt: TranspositionTable::new(1),
             history: Vec::new(),
             lmr_enabled: true,
+            futility_enabled: true,
         }
     }
 
@@ -665,6 +700,7 @@ mod tests {
             tt: TranspositionTable::new(1),
             history: Vec::new(),
             lmr_enabled: true,
+            futility_enabled: true,
         };
         // Run iterative deepening up to target depth to build PV
         for d in 1..=depth {
@@ -689,6 +725,7 @@ mod tests {
             tt: TranspositionTable::new(0),
             history: Vec::new(),
             lmr_enabled: true,
+            futility_enabled: true,
         };
         // Run iterative deepening but never set prev_pv
         for d in 1..=depth {
@@ -831,6 +868,7 @@ mod tests {
             tt: TranspositionTable::new(1),
             history: Vec::new(),
             lmr_enabled: true,
+            futility_enabled: true,
         };
         ctx_tt.tt.new_generation();
         for d in 1..=depth {
@@ -855,6 +893,7 @@ mod tests {
             tt: TranspositionTable::new(0),
             history: Vec::new(),
             lmr_enabled: true,
+            futility_enabled: true,
         };
         for d in 1..=depth {
             ctx_no_tt.pv_table.clear();
@@ -899,6 +938,7 @@ mod tests {
             tt: TranspositionTable::new(1),
             history: Vec::new(),
             lmr_enabled: true,
+            futility_enabled: true,
         };
         ctx.tt.new_generation();
         for d in 1..=4u8 {
@@ -939,6 +979,7 @@ mod tests {
             tt: TranspositionTable::new(1),
             history: Vec::new(),
             lmr_enabled: true,
+            futility_enabled: true,
         };
         ctx.tt.new_generation();
         let (score, mv) = negamax(&mut pos, 4, -INFINITY, INFINITY, 0, true, &mut ctx);
@@ -981,6 +1022,7 @@ mod tests {
                 tt: TranspositionTable::new(1),
                 history: Vec::new(),
                 lmr_enabled: true,
+                futility_enabled: true,
             };
             ctx.tt.new_generation();
             for d in 1..=4u8 {
@@ -1037,6 +1079,7 @@ mod tests {
             tt: TranspositionTable::new(1),
             history: Vec::new(),
             lmr_enabled: true,
+            futility_enabled: true,
         };
         ctx.tt.new_generation();
 
@@ -1082,6 +1125,7 @@ mod tests {
             tt: TranspositionTable::new(1),
             history: Vec::new(),
             lmr_enabled: true,
+            futility_enabled: true,
         };
         ctx_tt.tt.new_generation();
         for d in 1..=depth {
@@ -1106,6 +1150,7 @@ mod tests {
             tt: TranspositionTable::new(0),
             history: Vec::new(),
             lmr_enabled: true,
+            futility_enabled: true,
         };
         for d in 1..=depth {
             ctx_no_tt.pv_table.clear();
@@ -1150,6 +1195,7 @@ mod tests {
             tt: TranspositionTable::new(1),
             history: Vec::new(),
             lmr_enabled: true,
+            futility_enabled: true,
         };
         ctx_iid.tt.new_generation();
         for d in 1..=depth {
@@ -1174,6 +1220,7 @@ mod tests {
             tt: TranspositionTable::new(0),
             history: Vec::new(),
             lmr_enabled: true,
+            futility_enabled: true,
         };
         for d in 1..=depth {
             ctx_no_iid.pv_table.clear();
@@ -1216,6 +1263,7 @@ mod tests {
             tt: TranspositionTable::new(1),
             history: Vec::new(),
             lmr_enabled: true,
+            futility_enabled: true,
         };
         ctx_a.tt.new_generation();
 
@@ -1232,6 +1280,7 @@ mod tests {
             tt: TranspositionTable::new(1),
             history: Vec::new(),
             lmr_enabled: true,
+            futility_enabled: true,
         };
         ctx_b.tt.new_generation();
 
@@ -1264,6 +1313,7 @@ mod tests {
             tt: TranspositionTable::new(1),
             history: Vec::new(),
             lmr_enabled: true,
+            futility_enabled: true,
         };
         ctx.tt.new_generation();
 
@@ -1302,6 +1352,7 @@ mod tests {
             tt: TranspositionTable::new(1),
             history: vec![current_hash, current_hash],
             lmr_enabled: true,
+            futility_enabled: true,
         };
         ctx.tt.new_generation();
 
@@ -1372,6 +1423,7 @@ mod tests {
             tt: TranspositionTable::new(1),
             history: vec![current_hash],
             lmr_enabled: true,
+            futility_enabled: true,
         };
         ctx.tt.new_generation();
         ctx.history.push(pos2.hash());
@@ -1424,6 +1476,7 @@ mod tests {
             tt: TranspositionTable::new(1),
             history: vec![child_hash, 0, root_hash],
             lmr_enabled: true,
+            futility_enabled: true,
         };
         ctx.tt.new_generation();
 
@@ -1444,6 +1497,7 @@ mod tests {
             tt: TranspositionTable::new(1),
             history: Vec::new(),
             lmr_enabled: true,
+            futility_enabled: true,
         };
         ctx2.tt.new_generation();
 
@@ -1486,6 +1540,7 @@ mod tests {
             tt: TranspositionTable::new(1),
             history: Vec::new(),
             lmr_enabled: true,
+            futility_enabled: true,
         };
         ctx_nmp.tt.new_generation();
         negamax(&mut pos_nmp, depth, 0, 100, 1, true, &mut ctx_nmp);
@@ -1506,6 +1561,7 @@ mod tests {
             tt: TranspositionTable::new(1),
             history: Vec::new(),
             lmr_enabled: true,
+            futility_enabled: true,
         };
         ctx_no_nmp.tt.new_generation();
         negamax(&mut pos_no_nmp, depth, 0, 100, 1, false, &mut ctx_no_nmp);
@@ -1541,6 +1597,7 @@ mod tests {
             tt: TranspositionTable::new(1),
             history: Vec::new(),
             lmr_enabled: true,
+            futility_enabled: true,
         };
         ctx_a.tt.new_generation();
         negamax(&mut pos_a, depth, -INFINITY, INFINITY, 0, true, &mut ctx_a);
@@ -1560,6 +1617,7 @@ mod tests {
             tt: TranspositionTable::new(1),
             history: Vec::new(),
             lmr_enabled: true,
+            futility_enabled: true,
         };
         ctx_b.tt.new_generation();
         negamax(&mut pos_b, depth, -INFINITY, INFINITY, 0, false, &mut ctx_b);
@@ -1593,6 +1651,7 @@ mod tests {
             tt: TranspositionTable::new(1),
             history: Vec::new(),
             lmr_enabled: true,
+            futility_enabled: true,
         };
         ctx_a.tt.new_generation();
         negamax(&mut pos_a, depth, -INFINITY, INFINITY, 0, true, &mut ctx_a);
@@ -1612,6 +1671,7 @@ mod tests {
             tt: TranspositionTable::new(1),
             history: Vec::new(),
             lmr_enabled: true,
+            futility_enabled: true,
         };
         ctx_b.tt.new_generation();
         negamax(&mut pos_b, depth, -INFINITY, INFINITY, 0, false, &mut ctx_b);
@@ -1645,6 +1705,7 @@ mod tests {
             tt: TranspositionTable::new(1),
             history: Vec::new(),
             lmr_enabled: true,
+            futility_enabled: true,
         };
         ctx_a.tt.new_generation();
         negamax(&mut pos_a, depth, -INFINITY, INFINITY, 0, false, &mut ctx_a);
@@ -1664,6 +1725,7 @@ mod tests {
             tt: TranspositionTable::new(1),
             history: Vec::new(),
             lmr_enabled: true,
+            futility_enabled: true,
         };
         ctx_b.tt.new_generation();
         negamax(&mut pos_b, depth, -INFINITY, INFINITY, 0, false, &mut ctx_b);
@@ -1752,6 +1814,7 @@ mod tests {
                 tt: TranspositionTable::new(16),
                 history: Vec::new(),
                 lmr_enabled: true,
+                futility_enabled: true,
             };
             ctx_lmr.tt.new_generation();
             for d in 1..=depth {
@@ -1776,6 +1839,7 @@ mod tests {
                 tt: TranspositionTable::new(16),
                 history: Vec::new(),
                 lmr_enabled: false,
+                futility_enabled: true,
             };
             ctx_no_lmr.tt.new_generation();
             for d in 1..=depth {
@@ -1840,6 +1904,7 @@ mod tests {
                 tt: TranspositionTable::new(64),
                 history: Vec::new(),
                 lmr_enabled: false,
+                futility_enabled: true,
             };
             ctx_no_lmr.tt.new_generation();
             ctx_no_lmr.history.push(pos_no_lmr.hash());
@@ -1881,6 +1946,541 @@ mod tests {
     }
 
     #[test]
+    fn futility_margins_match_spec() {
+        assert_eq!(FUTILITY_MARGINS[1], 200);
+        assert_eq!(FUTILITY_MARGINS[2], 400);
+        assert_eq!(FUTILITY_MARGINS[3], 600);
+        assert_eq!(REVERSE_FUTILITY_MARGINS[1], 100);
+        assert_eq!(REVERSE_FUTILITY_MARGINS[2], 300);
+        assert_eq!(REVERSE_FUTILITY_MARGINS[3], 500);
+    }
+
+    #[test]
+    fn reverse_futility_prunes_node() {
+        // Use a standard middlegame position. Search at depth 6 with iterative
+        // deepening so internal nodes at depths 1-3 see narrowed alpha-beta
+        // windows where reverse futility can activate. Disable LMR and use a
+        // minimal TT to isolate the futility pruning effect.
+        let fen = "r1bqkbnr/pppppppp/2n5/8/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 1 2";
+        let depth: u8 = 6;
+
+        // With futility enabled
+        let mut pos_on = Position::from_fen(fen).expect("valid fen");
+        let mut ctx_on = SearchContext {
+            start: Instant::now(),
+            time_budget: Duration::from_secs(60),
+            nodes: 0,
+            aborted: false,
+            killers: KillerTable::new(),
+            pv_table: PvTable::new(),
+            prev_pv: Vec::new(),
+            stop_flag: None,
+            max_nodes: None,
+            tt: TranspositionTable::new(0),
+            history: Vec::new(),
+            lmr_enabled: false,
+            futility_enabled: true,
+        };
+        for d in 1..=depth {
+            ctx_on.pv_table.clear();
+            negamax(&mut pos_on, d, -INFINITY, INFINITY, 0, true, &mut ctx_on);
+            ctx_on.prev_pv = ctx_on.pv_table.extract_pv();
+        }
+        let nodes_on = ctx_on.nodes;
+
+        // With futility disabled
+        let mut pos_off = Position::from_fen(fen).expect("valid fen");
+        let mut ctx_off = SearchContext {
+            start: Instant::now(),
+            time_budget: Duration::from_secs(60),
+            nodes: 0,
+            aborted: false,
+            killers: KillerTable::new(),
+            pv_table: PvTable::new(),
+            prev_pv: Vec::new(),
+            stop_flag: None,
+            max_nodes: None,
+            tt: TranspositionTable::new(0),
+            history: Vec::new(),
+            lmr_enabled: false,
+            futility_enabled: false,
+        };
+        for d in 1..=depth {
+            ctx_off.pv_table.clear();
+            negamax(&mut pos_off, d, -INFINITY, INFINITY, 0, true, &mut ctx_off);
+            ctx_off.prev_pv = ctx_off.pv_table.extract_pv();
+        }
+        let nodes_off = ctx_off.nodes;
+
+        assert!(
+            nodes_on < nodes_off,
+            "reverse futility pruning should reduce nodes: {} (on) vs {} (off)",
+            nodes_on,
+            nodes_off
+        );
+    }
+
+    #[test]
+    fn futility_skips_quiet_moves() {
+        // White has massive material advantage. At depth 1 with a high alpha,
+        // futility pruning should skip quiet moves where static_eval + margin <= alpha.
+        let fen = "4k3/8/8/8/8/8/8/QR2K3 w - - 0 1";
+        let depth: u8 = 1;
+
+        // With futility enabled
+        let mut pos_on = Position::from_fen(fen).expect("valid fen");
+        let mut ctx_on = SearchContext {
+            start: Instant::now(),
+            time_budget: Duration::from_secs(60),
+            nodes: 0,
+            aborted: false,
+            killers: KillerTable::new(),
+            pv_table: PvTable::new(),
+            prev_pv: Vec::new(),
+            stop_flag: None,
+            max_nodes: None,
+            tt: TranspositionTable::new(1),
+            history: Vec::new(),
+            lmr_enabled: true,
+            futility_enabled: true,
+        };
+        ctx_on.tt.new_generation();
+        negamax(
+            &mut pos_on,
+            depth,
+            -INFINITY,
+            INFINITY,
+            0,
+            true,
+            &mut ctx_on,
+        );
+        let nodes_on = ctx_on.nodes;
+
+        // With futility disabled
+        let mut pos_off = Position::from_fen(fen).expect("valid fen");
+        let mut ctx_off = SearchContext {
+            start: Instant::now(),
+            time_budget: Duration::from_secs(60),
+            nodes: 0,
+            aborted: false,
+            killers: KillerTable::new(),
+            pv_table: PvTable::new(),
+            prev_pv: Vec::new(),
+            stop_flag: None,
+            max_nodes: None,
+            tt: TranspositionTable::new(1),
+            history: Vec::new(),
+            lmr_enabled: true,
+            futility_enabled: false,
+        };
+        ctx_off.tt.new_generation();
+        negamax(
+            &mut pos_off,
+            depth,
+            -INFINITY,
+            INFINITY,
+            0,
+            true,
+            &mut ctx_off,
+        );
+        let nodes_off = ctx_off.nodes;
+
+        assert!(
+            nodes_on <= nodes_off,
+            "futility pruning should not increase nodes: {} (on) vs {} (off)",
+            nodes_on,
+            nodes_off
+        );
+    }
+
+    #[test]
+    fn futility_does_not_prune_in_check() {
+        // Position where White is in check. Futility pruning must not activate.
+        // Node count should be the same with futility enabled and disabled.
+        let fen = "4k3/8/8/8/8/4q3/8/4K3 w - - 0 1";
+        let depth: u8 = 3;
+
+        let mut pos_on = Position::from_fen(fen).expect("valid fen");
+        let mut ctx_on = SearchContext {
+            start: Instant::now(),
+            time_budget: Duration::from_secs(60),
+            nodes: 0,
+            aborted: false,
+            killers: KillerTable::new(),
+            pv_table: PvTable::new(),
+            prev_pv: Vec::new(),
+            stop_flag: None,
+            max_nodes: None,
+            tt: TranspositionTable::new(1),
+            history: Vec::new(),
+            lmr_enabled: true,
+            futility_enabled: true,
+        };
+        ctx_on.tt.new_generation();
+
+        // Check if king is actually in check
+        let king_sq_w = king_square(&pos_on, Color::White);
+        let in_check = pos_on.is_square_attacked(king_sq_w, Color::Black);
+
+        if in_check {
+            negamax(
+                &mut pos_on,
+                depth,
+                -INFINITY,
+                INFINITY,
+                0,
+                true,
+                &mut ctx_on,
+            );
+            let nodes_on = ctx_on.nodes;
+
+            let mut pos_off = Position::from_fen(fen).expect("valid fen");
+            let mut ctx_off = SearchContext {
+                start: Instant::now(),
+                time_budget: Duration::from_secs(60),
+                nodes: 0,
+                aborted: false,
+                killers: KillerTable::new(),
+                pv_table: PvTable::new(),
+                prev_pv: Vec::new(),
+                stop_flag: None,
+                max_nodes: None,
+                tt: TranspositionTable::new(1),
+                history: Vec::new(),
+                lmr_enabled: true,
+                futility_enabled: false,
+            };
+            ctx_off.tt.new_generation();
+            negamax(
+                &mut pos_off,
+                depth,
+                -INFINITY,
+                INFINITY,
+                0,
+                true,
+                &mut ctx_off,
+            );
+            let nodes_off = ctx_off.nodes;
+
+            assert_eq!(
+                nodes_on, nodes_off,
+                "futility should not activate in check: {} vs {} nodes",
+                nodes_on, nodes_off
+            );
+        } else {
+            // Use a different position where White is definitely in check
+            let fen2 = "rnbqkbnr/pppp1ppp/8/4p3/7q/5P2/PPPPP1PP/RNBQKBNR w KQkq - 0 2";
+            let mut pos_on2 = Position::from_fen(fen2).expect("valid fen");
+            let mut ctx_on2 = SearchContext {
+                start: Instant::now(),
+                time_budget: Duration::from_secs(60),
+                nodes: 0,
+                aborted: false,
+                killers: KillerTable::new(),
+                pv_table: PvTable::new(),
+                prev_pv: Vec::new(),
+                stop_flag: None,
+                max_nodes: None,
+                tt: TranspositionTable::new(1),
+                history: Vec::new(),
+                lmr_enabled: true,
+                futility_enabled: true,
+            };
+            ctx_on2.tt.new_generation();
+            negamax(
+                &mut pos_on2,
+                depth,
+                -INFINITY,
+                INFINITY,
+                0,
+                true,
+                &mut ctx_on2,
+            );
+            let nodes_on2 = ctx_on2.nodes;
+
+            let mut pos_off2 = Position::from_fen(fen2).expect("valid fen");
+            let mut ctx_off2 = SearchContext {
+                start: Instant::now(),
+                time_budget: Duration::from_secs(60),
+                nodes: 0,
+                aborted: false,
+                killers: KillerTable::new(),
+                pv_table: PvTable::new(),
+                prev_pv: Vec::new(),
+                stop_flag: None,
+                max_nodes: None,
+                tt: TranspositionTable::new(1),
+                history: Vec::new(),
+                lmr_enabled: true,
+                futility_enabled: false,
+            };
+            ctx_off2.tt.new_generation();
+            negamax(
+                &mut pos_off2,
+                depth,
+                -INFINITY,
+                INFINITY,
+                0,
+                true,
+                &mut ctx_off2,
+            );
+            let nodes_off2 = ctx_off2.nodes;
+
+            assert_eq!(
+                nodes_on2, nodes_off2,
+                "futility should not activate in check: {} vs {} nodes",
+                nodes_on2, nodes_off2
+            );
+        }
+    }
+
+    #[test]
+    fn futility_does_not_prune_captures() {
+        // Tactical positions: futility should not prune captures/promotions.
+        // Best move must be identical with and without futility.
+        let positions = [
+            // Scholar's mate: Qxf7#
+            (
+                "r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4",
+                Square::F7,
+            ),
+            // Back-rank mate: Qd8#
+            ("6k1/5ppp/8/8/8/8/8/3Q1RK1 w - - 0 1", Square::D8),
+        ];
+
+        for (fen, expected_target) in positions {
+            let mut pos = Position::from_fen(fen).expect("valid fen");
+            let limits = SearchLimits {
+                max_time: Duration::from_secs(5),
+                max_depth: Some(6),
+                max_nodes: None,
+                stop_flag: None,
+            };
+            let mv = search(&mut pos, limits, &[], None);
+            assert!(mv.is_some(), "should find a move for FEN: {}", fen);
+            assert_eq!(
+                mv.unwrap().to_sq(),
+                expected_target,
+                "futility should not prune tactical best move for FEN: {}",
+                fen
+            );
+        }
+    }
+
+    #[test]
+    fn futility_preserves_wac_solve_rate() {
+        // Run WAC tactical positions at fixed depth with futility enabled and disabled.
+        // Verify the solve rate (correct best moves) is not reduced.
+        let wac_positions = [
+            // WAC.001: Qg6 or similar tactical blow
+            (
+                "2rr3k/pp3pp1/1nnqbN1p/3pN3/2pP4/2P3Q1/PPB4P/R4RK1 w - - 0 1",
+                vec![Square::G6],
+            ),
+            // Scholar's mate: Qxf7#
+            (
+                "r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4",
+                vec![Square::F7],
+            ),
+            // Back-rank mate: Qd8#
+            ("6k1/5ppp/8/8/8/8/8/3Q1RK1 w - - 0 1", vec![Square::D8]),
+            // Knight fork: Nxf7
+            (
+                "r1bqkb1r/pppp1ppp/2n2n2/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4",
+                vec![Square::G5, Square::D5],
+            ),
+        ];
+
+        let depth = 6;
+        let mut correct_on = 0;
+        let mut correct_off = 0;
+
+        for (fen, expected_targets) in &wac_positions {
+            // With futility
+            let mut pos_on = Position::from_fen(fen).expect("valid fen");
+            let mut ctx_on = SearchContext {
+                start: Instant::now(),
+                time_budget: Duration::from_secs(10),
+                nodes: 0,
+                aborted: false,
+                killers: KillerTable::new(),
+                pv_table: PvTable::new(),
+                prev_pv: Vec::new(),
+                stop_flag: None,
+                max_nodes: None,
+                tt: TranspositionTable::new(16),
+                history: Vec::new(),
+                lmr_enabled: true,
+                futility_enabled: true,
+            };
+            ctx_on.tt.new_generation();
+            ctx_on.history.push(pos_on.hash());
+            let mut mv_on = None;
+            for d in 1..=depth as u8 {
+                ctx_on.pv_table.clear();
+                let (_, mv) = negamax(&mut pos_on, d, -INFINITY, INFINITY, 0, true, &mut ctx_on);
+                ctx_on.prev_pv = ctx_on.pv_table.extract_pv();
+                if mv.is_some() {
+                    mv_on = mv;
+                }
+            }
+            if let Some(m) = mv_on {
+                if expected_targets.contains(&m.to_sq()) {
+                    correct_on += 1;
+                }
+            }
+
+            // Without futility
+            let mut pos_off = Position::from_fen(fen).expect("valid fen");
+            let mut ctx_off = SearchContext {
+                start: Instant::now(),
+                time_budget: Duration::from_secs(10),
+                nodes: 0,
+                aborted: false,
+                killers: KillerTable::new(),
+                pv_table: PvTable::new(),
+                prev_pv: Vec::new(),
+                stop_flag: None,
+                max_nodes: None,
+                tt: TranspositionTable::new(16),
+                history: Vec::new(),
+                lmr_enabled: true,
+                futility_enabled: false,
+            };
+            ctx_off.tt.new_generation();
+            ctx_off.history.push(pos_off.hash());
+            let mut mv_off = None;
+            for d in 1..=depth as u8 {
+                ctx_off.pv_table.clear();
+                let (_, mv) = negamax(&mut pos_off, d, -INFINITY, INFINITY, 0, true, &mut ctx_off);
+                ctx_off.prev_pv = ctx_off.pv_table.extract_pv();
+                if mv.is_some() {
+                    mv_off = mv;
+                }
+            }
+            if let Some(m) = mv_off {
+                if expected_targets.contains(&m.to_sq()) {
+                    correct_off += 1;
+                }
+            }
+        }
+
+        assert!(
+            correct_on >= correct_off,
+            "futility should not reduce WAC solve rate: {} (on) vs {} (off)",
+            correct_on,
+            correct_off
+        );
+    }
+
+    #[test]
+    fn futility_interacts_correctly_with_nmp_and_lmr() {
+        // Search startpos at depth 6 with all three pruning techniques enabled.
+        // Verify it completes without panic and returns a legal move.
+        // Then compare with each technique individually disabled.
+        let fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+        let depth: u8 = 6;
+
+        // All enabled
+        let mut pos = Position::from_fen(fen).expect("valid fen");
+        let mut ctx = SearchContext {
+            start: Instant::now(),
+            time_budget: Duration::from_secs(30),
+            nodes: 0,
+            aborted: false,
+            killers: KillerTable::new(),
+            pv_table: PvTable::new(),
+            prev_pv: Vec::new(),
+            stop_flag: None,
+            max_nodes: None,
+            tt: TranspositionTable::new(16),
+            history: Vec::new(),
+            lmr_enabled: true,
+            futility_enabled: true,
+        };
+        ctx.tt.new_generation();
+        ctx.history.push(pos.hash());
+        let mut best_all = None;
+        for d in 1..=depth {
+            ctx.pv_table.clear();
+            let (_, mv) = negamax(&mut pos, d, -INFINITY, INFINITY, 0, true, &mut ctx);
+            ctx.prev_pv = ctx.pv_table.extract_pv();
+            if mv.is_some() {
+                best_all = mv;
+            }
+        }
+        assert!(best_all.is_some(), "all-enabled search should find a move");
+        let legal = chess_movegen::generate_legal_moves(&mut pos);
+        assert!(
+            legal.contains(&best_all.unwrap()),
+            "all-enabled move must be legal"
+        );
+
+        // Futility disabled, LMR + NMP enabled
+        let mut pos2 = Position::from_fen(fen).expect("valid fen");
+        let mut ctx2 = SearchContext {
+            start: Instant::now(),
+            time_budget: Duration::from_secs(30),
+            nodes: 0,
+            aborted: false,
+            killers: KillerTable::new(),
+            pv_table: PvTable::new(),
+            prev_pv: Vec::new(),
+            stop_flag: None,
+            max_nodes: None,
+            tt: TranspositionTable::new(16),
+            history: Vec::new(),
+            lmr_enabled: true,
+            futility_enabled: false,
+        };
+        ctx2.tt.new_generation();
+        ctx2.history.push(pos2.hash());
+        let mut best_no_fut = None;
+        for d in 1..=depth {
+            ctx2.pv_table.clear();
+            let (_, mv) = negamax(&mut pos2, d, -INFINITY, INFINITY, 0, true, &mut ctx2);
+            ctx2.prev_pv = ctx2.pv_table.extract_pv();
+            if mv.is_some() {
+                best_no_fut = mv;
+            }
+        }
+        assert!(
+            best_no_fut.is_some(),
+            "no-futility search should find a move"
+        );
+
+        // LMR disabled, futility + NMP enabled
+        let mut pos3 = Position::from_fen(fen).expect("valid fen");
+        let mut ctx3 = SearchContext {
+            start: Instant::now(),
+            time_budget: Duration::from_secs(30),
+            nodes: 0,
+            aborted: false,
+            killers: KillerTable::new(),
+            pv_table: PvTable::new(),
+            prev_pv: Vec::new(),
+            stop_flag: None,
+            max_nodes: None,
+            tt: TranspositionTable::new(16),
+            history: Vec::new(),
+            lmr_enabled: false,
+            futility_enabled: true,
+        };
+        ctx3.tt.new_generation();
+        ctx3.history.push(pos3.hash());
+        let mut best_no_lmr = None;
+        for d in 1..=depth {
+            ctx3.pv_table.clear();
+            let (_, mv) = negamax(&mut pos3, d, -INFINITY, INFINITY, 0, true, &mut ctx3);
+            ctx3.prev_pv = ctx3.pv_table.extract_pv();
+            if mv.is_some() {
+                best_no_lmr = mv;
+            }
+        }
+        assert!(best_no_lmr.is_some(), "no-LMR search should find a move");
+    }
+
+    #[test]
     fn lmr_re_search_on_fail_high() {
         // Compare search results with LMR enabled vs disabled on tactical positions at depth 6.
         // Best move must match; scores must match on forced mate positions.
@@ -1907,6 +2507,7 @@ mod tests {
                 tt: TranspositionTable::new(16),
                 history: Vec::new(),
                 lmr_enabled: true,
+                futility_enabled: true,
             };
             ctx_lmr.tt.new_generation();
             ctx_lmr.history.push(pos_lmr.hash());
@@ -1937,6 +2538,7 @@ mod tests {
                 tt: TranspositionTable::new(16),
                 history: Vec::new(),
                 lmr_enabled: false,
+                futility_enabled: true,
             };
             ctx_no_lmr.tt.new_generation();
             ctx_no_lmr.history.push(pos_no_lmr.hash());

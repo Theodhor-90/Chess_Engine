@@ -26,3 +26,12 @@
 - [m06/p01/t02] critical: Compilation error at line 305: `let score;` must be `let mut score;` because the variable is assigned twice in the LMR branch — once for the reduced search (line 318) and again for the re-search on fail-high (line 322).
 - [m06/p01/t02] critical: Compilation error at line 973: the `tt_move_ordering_across_positions` test initializes `SearchContext` without the new `lmr_enabled` field. Add `lmr_enabled: true,` to the struct literal.
 - [m06/p01/t02] major: All four LMR-specific tests required by the locked plan are missing: `lmr_table_values_correct`, `lmr_reduces_node_count` (spec requires >=30% node reduction benchmark at depth 10), `lmr_skips_tt_moves`, and `lmr_re_search_on_fail_high`. These are required by both the plan (Section 5) and the task spec verification criteria.
+- [m06/p01/t03] The review is complete. The structured output has already been provided with the verdict and issues. To summarize:
+
+**Verdict: needs_revision**
+
+Two issues found:
+
+1. **Major** (`crates/search/src/lib.rs`): `cargo fmt --check` fails — the reverse futility pruning `if`-condition uses multi-line formatting that `rustfmt` wants collapsed to a single line. The spec's exit criterion 8 requires `cargo fmt --check` to pass.
+
+2. **Critical** (`crates/search/src/lib.rs`): All 7 futility-specific tests from the locked plan are missing: `futility_margins_match_spec`, `reverse_futility_prunes_node`, `futility_skips_quiet_moves`, `futility_does_not_prune_in_check`, `futility_does_not_prune_captures`, `futility_preserves_wac_solve_rate`, and `futility_interacts_correctly_with_nmp_and_lmr`. The implementation logic itself is correct, but the plan explicitly requires these tests, and the spec's exit criterion 4 (WAC solve-rate validation) depends on them.
