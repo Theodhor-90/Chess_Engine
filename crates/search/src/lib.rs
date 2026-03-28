@@ -16,6 +16,7 @@ use tt::{score_from_tt, score_to_tt, verification_key, BoundType, TranspositionT
 
 pub const MATE_SCORE: i32 = 30000;
 pub const INFINITY: i32 = 31000;
+const IID_MIN_DEPTH: i32 = 4;
 
 /// Callback invoked after each completed search depth: `(depth, score, nodes, elapsed, pv)`.
 pub type DepthCallback<'a> = &'a dyn Fn(u8, i32, u64, Duration, &[Move]);
@@ -176,6 +177,19 @@ pub fn negamax(
     if let Some(tm) = tt_move {
         if !moves.contains(&tm) {
             tt_move = None;
+        }
+    }
+
+    // Internal iterative deepening: if no TT move and depth is sufficient,
+    // do a reduced-depth search to populate the TT with a move for ordering.
+    if tt_move.is_none() && depth as i32 >= IID_MIN_DEPTH {
+        negamax(pos, depth - 2, alpha, beta, ply, ctx);
+        if let Some(entry) = ctx.tt.probe(hash) {
+            if let Some(iid_move) = entry.best_move() {
+                if moves.contains(&iid_move) {
+                    tt_move = Some(iid_move);
+                }
+            }
         }
     }
 
@@ -949,5 +963,136 @@ mod tests {
             nodes_with_tt,
             nodes_without_tt
         );
+    }
+
+    #[test]
+    fn iid_reduces_node_count() {
+        let fen = "r1bqkb1r/pppppppp/2n2n2/8/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3";
+        let depth: u8 = 5;
+
+        // Search with 1 MB TT (IID populates TT effectively)
+        let mut pos_iid = Position::from_fen(fen).expect("valid fen");
+        let mut ctx_iid = SearchContext {
+            start: Instant::now(),
+            time_budget: Duration::from_secs(60),
+            nodes: 0,
+            aborted: false,
+            killers: KillerTable::new(),
+            pv_table: PvTable::new(),
+            prev_pv: Vec::new(),
+            stop_flag: None,
+            max_nodes: None,
+            tt: TranspositionTable::new(1),
+        };
+        ctx_iid.tt.new_generation();
+        for d in 1..=depth {
+            ctx_iid.pv_table.clear();
+            negamax(&mut pos_iid, d, -INFINITY, INFINITY, 0, &mut ctx_iid);
+            ctx_iid.prev_pv = ctx_iid.pv_table.extract_pv();
+        }
+        let nodes_with_iid = ctx_iid.nodes;
+
+        // Search with 0 MB TT (IID benefit neutralized)
+        let mut pos_no_iid = Position::from_fen(fen).expect("valid fen");
+        let mut ctx_no_iid = SearchContext {
+            start: Instant::now(),
+            time_budget: Duration::from_secs(60),
+            nodes: 0,
+            aborted: false,
+            killers: KillerTable::new(),
+            pv_table: PvTable::new(),
+            prev_pv: Vec::new(),
+            stop_flag: None,
+            max_nodes: None,
+            tt: TranspositionTable::new(0),
+        };
+        for d in 1..=depth {
+            ctx_no_iid.pv_table.clear();
+            negamax(&mut pos_no_iid, d, -INFINITY, INFINITY, 0, &mut ctx_no_iid);
+            ctx_no_iid.prev_pv = ctx_no_iid.pv_table.extract_pv();
+        }
+        let nodes_without_iid = ctx_no_iid.nodes;
+
+        assert!(
+            nodes_with_iid < nodes_without_iid,
+            "IID should reduce nodes: {} (with IID) vs {} (without IID)",
+            nodes_with_iid,
+            nodes_without_iid
+        );
+    }
+
+    #[test]
+    fn iid_does_not_trigger_below_threshold() {
+        let mut pos_a = Position::startpos();
+        let mut pos_b = Position::startpos();
+
+        let mut ctx_a = SearchContext {
+            start: Instant::now(),
+            time_budget: Duration::from_secs(60),
+            nodes: 0,
+            aborted: false,
+            killers: KillerTable::new(),
+            pv_table: PvTable::new(),
+            prev_pv: Vec::new(),
+            stop_flag: None,
+            max_nodes: None,
+            tt: TranspositionTable::new(1),
+        };
+        ctx_a.tt.new_generation();
+
+        let mut ctx_b = SearchContext {
+            start: Instant::now(),
+            time_budget: Duration::from_secs(60),
+            nodes: 0,
+            aborted: false,
+            killers: KillerTable::new(),
+            pv_table: PvTable::new(),
+            prev_pv: Vec::new(),
+            stop_flag: None,
+            max_nodes: None,
+            tt: TranspositionTable::new(1),
+        };
+        ctx_b.tt.new_generation();
+
+        negamax(&mut pos_a, 3, -INFINITY, INFINITY, 0, &mut ctx_a);
+        negamax(&mut pos_b, 3, -INFINITY, INFINITY, 0, &mut ctx_b);
+
+        assert_eq!(
+            ctx_a.nodes, ctx_b.nodes,
+            "IID should not trigger at depth 3: {} vs {} nodes",
+            ctx_a.nodes, ctx_b.nodes
+        );
+    }
+
+    #[test]
+    fn iid_finds_move_for_ordering() {
+        let fen = "r1bqkb1r/pppppppp/2n2n2/8/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3";
+        let mut pos = Position::from_fen(fen).expect("valid fen");
+        let hash = pos.hash();
+
+        let mut ctx = SearchContext {
+            start: Instant::now(),
+            time_budget: Duration::from_secs(60),
+            nodes: 0,
+            aborted: false,
+            killers: KillerTable::new(),
+            pv_table: PvTable::new(),
+            prev_pv: Vec::new(),
+            stop_flag: None,
+            max_nodes: None,
+            tt: TranspositionTable::new(1),
+        };
+        ctx.tt.new_generation();
+
+        let (_, mv) = negamax(&mut pos, 5, -INFINITY, INFINITY, 0, &mut ctx);
+
+        let entry = ctx
+            .tt
+            .probe(hash)
+            .expect("TT should have an entry after search");
+        let best = entry.best_move().expect("TT entry should have a best move");
+        let legal_moves = chess_movegen::generate_legal_moves(&mut pos);
+        assert!(legal_moves.contains(&best), "TT best move should be legal");
+        assert!(mv.is_some(), "search should return a valid move");
     }
 }
