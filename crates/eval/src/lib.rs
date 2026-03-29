@@ -1,4 +1,5 @@
 pub mod endgame;
+pub mod king_centralization;
 pub mod king_safety;
 pub mod material;
 pub mod mobility;
@@ -84,6 +85,10 @@ pub fn evaluate(pos: &Position, pawn_table: &mut PawnHashTable) -> i32 {
     let (b_pc_mg, b_pc_eg) = pieces::evaluate_piece_bonuses(pos, Color::Black);
     mg_score += w_pc_mg - b_pc_mg;
     eg_score += w_pc_eg - b_pc_eg;
+
+    let (kc_mg, kc_eg) = king_centralization::evaluate_king_centralization(pos);
+    mg_score += kc_mg;
+    eg_score += kc_eg;
 
     let phase = compute_phase(pos);
     let score = ((mg_score * phase) + (eg_score * (MAX_PHASE - phase))) / MAX_PHASE;
