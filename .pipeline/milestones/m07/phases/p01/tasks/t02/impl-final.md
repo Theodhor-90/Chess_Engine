@@ -1,0 +1,8 @@
+- **Modified**: `crates/eval/src/pawn.rs`
+  - Added 10 evaluation constants: `DOUBLED_PAWN_PENALTY_MG/EG`, `ISOLATED_PAWN_PENALTY_MG/EG`, `BACKWARD_PAWN_PENALTY_MG/EG`, `PASSED_PAWN_BONUS_MG/EG` (rank-indexed arrays), `CONNECTED_PAWN_BONUS_MG/EG`
+  - Added bitboard helper constants: `NOT_A_FILE`, `NOT_H_FILE`, `FILE_MASKS[8]`, `ADJACENT_FILE_MASKS[8]`
+  - Added helper functions: `rank_bb()`, `ranks_up_to()`, `ranks_from()`, `forward_mask()`
+  - Added `evaluate_color()` — evaluates all five pawn structure terms for one color
+  - Added `pub fn evaluate_pawns(pos: &Position) -> (i32, i32)` — computes combined mg/eg pawn structure score from White's perspective
+  - Added 7 unit tests: `doubled_pawns_penalized`, `isolated_pawn_penalized`, `backward_pawn_penalized`, `passed_pawn_bonus_scales_by_rank`, `connected_pawns_bonus`, `both_colors_evaluated`, `startpos_pawns_symmetric`
+- **Verification**: `cargo test -p chess-eval` (23 pass), `cargo clippy -p chess-eval -- -D warnings` (clean), `cargo fmt --check -p chess-eval` (clean), `cargo test --workspace` (392 pass, 0 fail)
