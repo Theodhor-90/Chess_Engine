@@ -1,3 +1,4 @@
+pub mod king_safety;
 pub mod material;
 pub mod pawn;
 pub mod phase;
@@ -58,6 +59,11 @@ pub fn evaluate(pos: &Position, pawn_table: &mut PawnHashTable) -> i32 {
     mg_score += pawn_mg + pp_extra_mg;
     eg_score += pawn_eg + pp_extra_eg;
 
+    let (w_ks_mg, w_ks_eg) = king_safety::evaluate_king_safety(pos, Color::White);
+    let (b_ks_mg, b_ks_eg) = king_safety::evaluate_king_safety(pos, Color::Black);
+    mg_score += w_ks_mg - b_ks_mg;
+    eg_score += w_ks_eg - b_ks_eg;
+
     let phase = compute_phase(pos);
     let score = ((mg_score * phase) + (eg_score * (MAX_PHASE - phase))) / MAX_PHASE;
 
@@ -104,7 +110,7 @@ mod tests {
     #[test]
     fn tapered_eval_interpolation() {
         let pos = Position::from_fen("4k3/8/8/8/3N4/8/8/4K3 w - - 0 1").unwrap();
-        assert_eq!(evaluate(&pos, &mut PawnHashTable::new()), 344);
+        assert_eq!(evaluate(&pos, &mut PawnHashTable::new()), 346);
     }
 
     #[test]

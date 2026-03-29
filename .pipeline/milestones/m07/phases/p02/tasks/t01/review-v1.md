@@ -1,0 +1,1 @@
+The workspace test failure is the pre-existing `futility_does_not_prune_in_check` test in the search crate (115 passed, 1 failed), which is documented as a known issue from m06/p03/t01 and is completely unrelated to the king safety implementation. The structured output has already been provided with the `approved` verdict.

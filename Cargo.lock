@@ -21,6 +21,7 @@ name = "chess-eval"
 version = "0.1.0"
 dependencies = [
  "chess-board",
+ "chess-movegen",
  "chess-types",
 ]
 
