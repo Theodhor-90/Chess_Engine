@@ -928,13 +928,13 @@
           }
         },
         "p02": {
-          "status": "in_progress",
+          "status": "completed",
           "planning": {
             "iteration": 1,
             "totalAttempts": 1,
             "tiebreakerUsed": false
           },
-          "currentTask": "t03",
+          "currentTask": null,
           "tasks": {
             "t01": {
               "status": "completed",
