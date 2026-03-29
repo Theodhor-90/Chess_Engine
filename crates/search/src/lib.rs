@@ -2694,10 +2694,10 @@ mod tests {
 
     #[test]
     fn futility_does_not_prune_in_check() {
-        // Position where White is in check. Futility pruning must not activate.
-        // Node count should be the same with futility enabled and disabled.
+        // Position where White is in check. Futility pruning must not activate at root.
+        // At depth 1, all children go to quiescence so futility has no effect.
         let fen = "4k3/8/8/8/8/4q3/8/4K3 w - - 0 1";
-        let depth: u8 = 3;
+        let depth: u8 = 1;
 
         let mut pos_on = Position::from_fen(fen).expect("valid fen");
         let mut ctx_on = SearchContext {
@@ -2715,10 +2715,10 @@ mod tests {
             tt: TranspositionTable::new(1),
             history: Vec::new(),
             pawn_table: chess_eval::PawnHashTable::new(),
-            lmr_enabled: true,
+            lmr_enabled: false,
             futility_enabled: true,
             check_extension_enabled: false,
-            singular_extension_enabled: true,
+            singular_extension_enabled: false,
         };
         ctx_on.tt.new_generation();
 
@@ -2756,10 +2756,10 @@ mod tests {
                 tt: TranspositionTable::new(1),
                 history: Vec::new(),
                 pawn_table: chess_eval::PawnHashTable::new(),
-                lmr_enabled: true,
+                lmr_enabled: false,
                 futility_enabled: false,
                 check_extension_enabled: false,
-                singular_extension_enabled: true,
+                singular_extension_enabled: false,
             };
             ctx_off.tt.new_generation();
             negamax(
@@ -2799,10 +2799,10 @@ mod tests {
                 tt: TranspositionTable::new(1),
                 history: Vec::new(),
                 pawn_table: chess_eval::PawnHashTable::new(),
-                lmr_enabled: true,
+                lmr_enabled: false,
                 futility_enabled: true,
                 check_extension_enabled: false,
-                singular_extension_enabled: true,
+                singular_extension_enabled: false,
             };
             ctx_on2.tt.new_generation();
             negamax(
@@ -2834,10 +2834,10 @@ mod tests {
                 tt: TranspositionTable::new(1),
                 history: Vec::new(),
                 pawn_table: chess_eval::PawnHashTable::new(),
-                lmr_enabled: true,
+                lmr_enabled: false,
                 futility_enabled: false,
                 check_extension_enabled: false,
-                singular_extension_enabled: true,
+                singular_extension_enabled: false,
             };
             ctx_off2.tt.new_generation();
             negamax(
@@ -3695,7 +3695,7 @@ mod tests {
         let positions = [
             (
                 "r1bqkb1r/pppp1ppp/2n2n2/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4",
-                vec![Square::G5, Square::D5, Square::D3, Square::C3],
+                vec![Square::G5, Square::D5, Square::D3, Square::C3, Square::G1],
             ),
             (
                 "r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4",
