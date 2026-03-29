@@ -13,6 +13,11 @@ const PASSED_PAWN_BONUS_EG: [i32; 8] = [0, 0, 10, 20, 40, 70, 120, 0];
 const CONNECTED_PAWN_BONUS_MG: i32 = 5;
 const CONNECTED_PAWN_BONUS_EG: i32 = 7;
 
+const KING_PROXIMITY_OWN_BONUS: i32 = 5;
+const KING_PROXIMITY_OPP_BONUS: i32 = 3;
+const BLOCKED_PASSED_PAWN_PENALTY_MG: i32 = -5;
+const BLOCKED_PASSED_PAWN_PENALTY_EG: i32 = -10;
+
 const NOT_A_FILE: Bitboard = Bitboard::new(0xFEFE_FEFE_FEFE_FEFE);
 const NOT_H_FILE: Bitboard = Bitboard::new(0x7F7F_7F7F_7F7F_7F7F);
 
@@ -179,6 +184,76 @@ pub fn evaluate_pawns(pos: &Position) -> (i32, i32) {
     let (black_mg, black_eg) = evaluate_color(black_pawns, white_pawns, Color::Black);
 
     (white_mg - black_mg, white_eg - black_eg)
+}
+
+fn chebyshev_distance(sq1: u32, sq2: u32) -> i32 {
+    let file1 = (sq1 % 8) as i32;
+    let rank1 = (sq1 / 8) as i32;
+    let file2 = (sq2 % 8) as i32;
+    let rank2 = (sq2 / 8) as i32;
+    (file1 - file2).abs().max((rank1 - rank2).abs())
+}
+
+pub fn evaluate_passed_pawn_extras(pos: &Position) -> (i32, i32) {
+    let white_pawns = pos.piece_bitboard(Piece::new(Color::White, PieceKind::Pawn));
+    let black_pawns = pos.piece_bitboard(Piece::new(Color::Black, PieceKind::Pawn));
+    let occupied = pos.occupied();
+
+    let white_king_sq = pos
+        .piece_bitboard(Piece::new(Color::White, PieceKind::King))
+        .into_iter()
+        .next()
+        .unwrap();
+    let black_king_sq = pos
+        .piece_bitboard(Piece::new(Color::Black, PieceKind::King))
+        .into_iter()
+        .next()
+        .unwrap();
+
+    let mut mg = 0i32;
+    let mut eg = 0i32;
+
+    for sq_idx in white_pawns {
+        let file = sq_idx % 8;
+        let rank = sq_idx / 8;
+        let passed_mask = forward_mask(file as u8, rank as u8, Color::White);
+        if !(black_pawns & passed_mask).is_empty() {
+            continue;
+        }
+        let own_dist = chebyshev_distance(white_king_sq, sq_idx);
+        let opp_dist = chebyshev_distance(black_king_sq, sq_idx);
+        eg += KING_PROXIMITY_OWN_BONUS * (7 - own_dist);
+        eg += KING_PROXIMITY_OPP_BONUS * opp_dist;
+        if rank < 7 {
+            let advance_sq = sq_idx + 8;
+            if !(occupied & Bitboard::new(1u64 << advance_sq)).is_empty() {
+                mg += BLOCKED_PASSED_PAWN_PENALTY_MG;
+                eg += BLOCKED_PASSED_PAWN_PENALTY_EG;
+            }
+        }
+    }
+
+    for sq_idx in black_pawns {
+        let file = sq_idx % 8;
+        let rank = sq_idx / 8;
+        let passed_mask = forward_mask(file as u8, rank as u8, Color::Black);
+        if !(white_pawns & passed_mask).is_empty() {
+            continue;
+        }
+        let own_dist = chebyshev_distance(black_king_sq, sq_idx);
+        let opp_dist = chebyshev_distance(white_king_sq, sq_idx);
+        eg -= KING_PROXIMITY_OWN_BONUS * (7 - own_dist);
+        eg -= KING_PROXIMITY_OPP_BONUS * opp_dist;
+        if rank > 0 {
+            let advance_sq = sq_idx - 8;
+            if !(occupied & Bitboard::new(1u64 << advance_sq)).is_empty() {
+                mg -= BLOCKED_PASSED_PAWN_PENALTY_MG;
+                eg -= BLOCKED_PASSED_PAWN_PENALTY_EG;
+            }
+        }
+    }
+
+    (mg, eg)
 }
 
 const DEFAULT_SIZE: usize = 16_384;
@@ -350,6 +425,46 @@ mod tests {
         let (mg, eg) = evaluate_pawns(&pos);
         assert!(mg > 0, "mg should be positive (White advantage): {mg}");
         assert!(eg > 0, "eg should be positive (White advantage): {eg}");
+    }
+
+    #[test]
+    fn blocked_passed_pawn_lower_than_unblocked() {
+        let blocked = Position::from_fen("4k3/8/3n4/3P4/8/8/8/4K3 w - - 0 1").unwrap();
+        let unblocked = Position::from_fen("4k3/8/8/3P4/8/8/8/4K3 w - - 0 1").unwrap();
+        let (blk_mg, blk_eg) = evaluate_passed_pawn_extras(&blocked);
+        let (unblk_mg, unblk_eg) = evaluate_passed_pawn_extras(&unblocked);
+        assert!(
+            blk_mg < unblk_mg,
+            "blocked mg {blk_mg} should be less than unblocked mg {unblk_mg}"
+        );
+        assert!(
+            blk_eg < unblk_eg,
+            "blocked eg {blk_eg} should be less than unblocked eg {unblk_eg}"
+        );
+    }
+
+    #[test]
+    fn king_proximity_own_king_close_scores_higher() {
+        let close = Position::from_fen("7k/8/8/3P4/4K3/8/8/8 w - - 0 1").unwrap();
+        let far = Position::from_fen("7k/8/8/3P4/8/8/8/K7 w - - 0 1").unwrap();
+        let (_, close_eg) = evaluate_passed_pawn_extras(&close);
+        let (_, far_eg) = evaluate_passed_pawn_extras(&far);
+        assert!(
+            close_eg > far_eg,
+            "close king eg {close_eg} should exceed far king eg {far_eg}"
+        );
+    }
+
+    #[test]
+    fn king_proximity_opp_king_far_scores_higher() {
+        let far_opp = Position::from_fen("7k/8/8/3P4/8/8/8/4K3 w - - 0 1").unwrap();
+        let close_opp = Position::from_fen("4k3/8/8/3P4/8/8/8/4K3 w - - 0 1").unwrap();
+        let (_, far_eg) = evaluate_passed_pawn_extras(&far_opp);
+        let (_, close_eg) = evaluate_passed_pawn_extras(&close_opp);
+        assert!(
+            far_eg > close_eg,
+            "far opponent eg {far_eg} should exceed close opponent eg {close_eg}"
+        );
     }
 
     #[test]
