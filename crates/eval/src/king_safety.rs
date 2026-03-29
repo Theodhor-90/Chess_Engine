@@ -4,10 +4,10 @@ use chess_movegen::knights::KNIGHT_ATTACKS;
 use chess_movegen::magic::{bishop_attacks, rook_attacks};
 use chess_types::{Bitboard, Color, Piece, PieceKind, Square};
 
-const PAWN_SHIELD_BONUS_MG: [i32; 4] = [35, 20, 8, 0];
+const PAWN_SHIELD_BONUS_MG: [i32; 4] = [15, 8, 3, 0];
 const PAWN_SHIELD_BONUS_EG: [i32; 4] = [10, 5, 2, 0];
 
-const OPEN_FILE_NEAR_KING_PENALTY_MG: i32 = -25;
+const OPEN_FILE_NEAR_KING_PENALTY_MG: i32 = -15;
 const OPEN_FILE_NEAR_KING_PENALTY_EG: i32 = -10;
 
 const KNIGHT_ATTACK_WEIGHT: i32 = 2;
@@ -15,7 +15,7 @@ const BISHOP_ATTACK_WEIGHT: i32 = 2;
 const ROOK_ATTACK_WEIGHT: i32 = 3;
 const QUEEN_ATTACK_WEIGHT: i32 = 5;
 
-const ATTACK_SCORE_SCALE_MG: i32 = 4;
+const ATTACK_SCORE_SCALE_MG: i32 = 1;
 const ATTACK_SCORE_SCALE_EG: i32 = 1;
 
 const FILE_MASKS: [Bitboard; 8] = [
