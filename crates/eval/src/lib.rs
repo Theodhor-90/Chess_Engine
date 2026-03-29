@@ -1,4 +1,5 @@
 pub mod material;
+pub mod pawn;
 pub mod phase;
 pub mod pst;
 

@@ -1,0 +1,3 @@
+- **Created**: `crates/eval/src/pawn.rs` — `PawnHashEntry` (Clone, Copy, Default), `PawnHashTable` (with Default impl, `new()`, `probe()`, `store()`), `pawn_zobrist_hash()`, and 3 unit tests (`probe_miss_returns_none`, `store_then_probe_returns_correct_scores`, `different_pawn_configs_produce_different_keys`)
+- **Modified**: `crates/eval/src/lib.rs` — added `pub mod pawn;` declaration
+- **Verification**: `cargo test -p chess-eval` (16/16 pass), `cargo clippy -p chess-eval -- -D warnings` (clean), `cargo fmt --check -p chess-eval` (clean)
