@@ -10,3 +10,7 @@ chess-board = { path = "../board" }
 [[test]]
 name = "perft"
 path = "../../tests/perft.rs"
+
+[[test]]
+name = "perft_suite"
+path = "../../tests/perft_suite.rs"
