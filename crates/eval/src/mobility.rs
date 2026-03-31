@@ -5,10 +5,10 @@ use chess_types::{Bitboard, Color, Piece, PieceKind, Square};
 
 const KNIGHT_MOBILITY_MG: i32 = 4;
 const KNIGHT_MOBILITY_EG: i32 = 4;
-const BISHOP_MOBILITY_MG: i32 = 5;
+const BISHOP_MOBILITY_MG: i32 = 6;
 const BISHOP_MOBILITY_EG: i32 = 5;
-const ROOK_MOBILITY_MG: i32 = 2;
-const ROOK_MOBILITY_EG: i32 = 3;
+const ROOK_MOBILITY_MG: i32 = 3;
+const ROOK_MOBILITY_EG: i32 = 4;
 const QUEEN_MOBILITY_MG: i32 = 1;
 const QUEEN_MOBILITY_EG: i32 = 2;
 
