@@ -126,6 +126,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "texel"
+version = "0.1.0"
+dependencies = [
+ "chess-board",
+ "chess-eval",
+ "chess-movegen",
+ "chess-types",
+]
+
+[[package]]
 name = "thiserror"
 version = "2.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"

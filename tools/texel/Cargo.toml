@@ -1,0 +1,10 @@
+[package]
+name = "texel"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+chess-types = { path = "../../crates/types" }
+chess-board = { path = "../../crates/board" }
+chess-eval = { path = "../../crates/eval" }
+chess-movegen = { path = "../../crates/movegen" }
