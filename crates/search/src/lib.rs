@@ -24,10 +24,12 @@ pub const MATE_SCORE: i32 = 30000;
 pub const INFINITY: i32 = 31000;
 const IID_MIN_DEPTH: i32 = 4;
 const MAX_PLY: i32 = 128;
-const FUTILITY_MARGINS: [i32; 4] = [0, 200, 400, 600];
-const REVERSE_FUTILITY_MARGINS: [i32; 4] = [0, 100, 300, 500];
+const FUTILITY_MARGINS: [i32; 4] = [0, 180, 360, 540];
+const REVERSE_FUTILITY_MARGINS: [i32; 4] = [0, 120, 350, 550];
 const SINGULAR_MARGIN: i32 = 64;
 const SINGULAR_MIN_DEPTH: u8 = 6;
+const ASPIRATION_DELTA: i32 = 25;
+const ASPIRATION_WIDEN_FACTOR: i32 = 4;
 
 /// Callback invoked after each completed search depth: `(depth, score, nodes, elapsed, pv)`.
 pub type DepthCallback<'a> = &'a dyn Fn(u8, i32, u64, Duration, &[Move]);
@@ -93,7 +95,7 @@ fn lmr_table() -> &'static [[u8; LMR_MAX_MOVES]; LMR_MAX_DEPTH] {
         let mut t = [[0u8; LMR_MAX_MOVES]; LMR_MAX_DEPTH];
         for d in 1..LMR_MAX_DEPTH {
             for m in 1..LMR_MAX_MOVES {
-                t[d][m] = ((d as f64).ln() * (m as f64).ln() / 1.75).floor() as u8;
+                t[d][m] = ((d as f64).ln() * (m as f64).ln() / 1.80).floor() as u8;
             }
         }
         t
@@ -299,7 +301,7 @@ pub fn negamax(
         && pos.has_non_pawn_material(pos.side_to_move())
         && beta.abs() < MATE_SCORE - MAX_PLY
     {
-        let r: u8 = if depth <= 6 { 2 } else { 3 };
+        let r: u8 = if depth <= 5 { 2 } else { 3 };
         let null_undo = pos.make_null_move();
         ctx.history.push(pos.hash());
         let (null_score, _) = negamax(
@@ -666,13 +668,52 @@ pub fn search(
 
     let mut best_move: Option<Move> = None;
     let mut depth: u8 = 1;
+    let mut prev_score: i32 = 0;
 
     loop {
         ctx.aborted = false;
         ctx.pv_table.clear();
-        let (score, mv) = negamax(
-            pos, depth, -INFINITY, INFINITY, 0, true, &mut ctx, None, None,
-        );
+
+        let (score, mv) = if depth >= 5 && prev_score.abs() < MATE_SCORE - 100 {
+            let mut delta = ASPIRATION_DELTA;
+            let mut alpha = prev_score - delta;
+            let mut beta = prev_score + delta;
+            let mut fail_low = 0;
+            let mut fail_high = 0;
+
+            loop {
+                ctx.pv_table.clear();
+                let (s, m) = negamax(pos, depth, alpha, beta, 0, true, &mut ctx, None, None);
+
+                if ctx.aborted {
+                    break (s, m);
+                }
+
+                if s <= alpha {
+                    fail_low += 1;
+                    if fail_low >= 2 {
+                        alpha = -INFINITY;
+                    } else {
+                        delta *= ASPIRATION_WIDEN_FACTOR;
+                        alpha = prev_score - delta;
+                    }
+                } else if s >= beta {
+                    fail_high += 1;
+                    if fail_high >= 2 {
+                        beta = INFINITY;
+                    } else {
+                        delta *= ASPIRATION_WIDEN_FACTOR;
+                        beta = prev_score + delta;
+                    }
+                } else {
+                    break (s, m);
+                }
+            }
+        } else {
+            negamax(
+                pos, depth, -INFINITY, INFINITY, 0, true, &mut ctx, None, None,
+            )
+        };
 
         if ctx.aborted {
             break;
@@ -682,6 +723,7 @@ pub fn search(
             best_move = mv;
         }
 
+        prev_score = score;
         ctx.prev_pv = ctx.pv_table.extract_pv();
 
         if let Some(ref cb) = on_depth {
@@ -2308,11 +2350,11 @@ mod tests {
             assert_eq!(table[d][0], 0, "table[{}][0] should be 0", d);
         }
 
-        // table[6][4] = floor(ln(6) * ln(4) / 1.75) = floor(1.419) = 1
+        // table[6][4] = floor(ln(6) * ln(4) / 1.80) = floor(1.380) = 1
         assert_eq!(table[6][4], 1, "table[6][4] should be 1");
 
-        // table[10][10] = floor(ln(10) * ln(10) / 1.75) = floor(3.031) = 3
-        assert_eq!(table[10][10], 3, "table[10][10] should be 3");
+        // table[10][10] = floor(ln(10) * ln(10) / 1.80) = floor(2.946) = 2
+        assert_eq!(table[10][10], 2, "table[10][10] should be 2");
     }
 
     #[test]
@@ -2502,12 +2544,12 @@ mod tests {
 
     #[test]
     fn futility_margins_match_spec() {
-        assert_eq!(FUTILITY_MARGINS[1], 200);
-        assert_eq!(FUTILITY_MARGINS[2], 400);
-        assert_eq!(FUTILITY_MARGINS[3], 600);
-        assert_eq!(REVERSE_FUTILITY_MARGINS[1], 100);
-        assert_eq!(REVERSE_FUTILITY_MARGINS[2], 300);
-        assert_eq!(REVERSE_FUTILITY_MARGINS[3], 500);
+        assert_eq!(FUTILITY_MARGINS[1], 180);
+        assert_eq!(FUTILITY_MARGINS[2], 360);
+        assert_eq!(FUTILITY_MARGINS[3], 540);
+        assert_eq!(REVERSE_FUTILITY_MARGINS[1], 120);
+        assert_eq!(REVERSE_FUTILITY_MARGINS[2], 350);
+        assert_eq!(REVERSE_FUTILITY_MARGINS[3], 550);
     }
 
     #[test]

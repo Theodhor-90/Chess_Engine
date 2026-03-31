@@ -1,0 +1,1 @@
+The full `cargo test` run has also completed successfully (exit code 0), confirming all tests pass across the entire workspace — including the long-running `perft_suite` integration test. This further validates the approved verdict.
