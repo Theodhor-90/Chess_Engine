@@ -1,0 +1,34 @@
+[defaults]
+games = 500
+concurrency = 1
+openings_file = "tools/selfplay/openings.txt"
+openings_format = "epd"
+repeat = true
+
+[[engine]]
+name = "Stockfish"
+cmd = "stockfish"
+tc = "10+0.1"
+
+[engine.options]
+Threads = "1"
+Hash = "64"
+"Skill Level" = "5"
+
+[[engine]]
+name = "Ethereal"
+cmd = "ethereal"
+tc = "10+0.1"
+
+[engine.options]
+Threads = "1"
+Hash = "64"
+
+[[engine]]
+name = "Rustic"
+cmd = "rustic"
+tc = "10+0.1"
+
+[engine.options]
+Threads = "1"
+Hash = "64"
