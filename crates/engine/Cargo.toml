@@ -19,3 +19,4 @@ chess-board = { path = "../board" }
 chess-types = { path = "../types" }
 anyhow = "1"
 rand = "0.8"
+fathom-syzygy = "0.1.0"
