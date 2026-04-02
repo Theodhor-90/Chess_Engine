@@ -1,6 +1,6 @@
 {
   "project": "chess-engine",
-  "currentMilestone": "m08",
+  "currentMilestone": "m09",
   "milestones": {
     "m01": {
       "status": "completed",
@@ -1030,13 +1030,13 @@
       }
     },
     "m08": {
-      "status": "in_progress",
+      "status": "completed",
       "planning": {
         "iteration": 2,
         "totalAttempts": 2,
         "tiebreakerUsed": false
       },
-      "currentPhase": "p03",
+      "currentPhase": null,
       "phases": {
         "p01": {
           "status": "completed",
@@ -1191,14 +1191,75 @@
       }
     },
     "m09": {
-      "status": "pending",
+      "status": "in_progress",
       "planning": {
-        "iteration": 0,
-        "totalAttempts": 0,
-        "tiebreakerUsed": false
+        "iteration": 3,
+        "totalAttempts": 3,
+        "tiebreakerUsed": true
       },
-      "currentPhase": null,
-      "phases": {}
+      "currentPhase": "p01",
+      "phases": {
+        "p01": {
+          "status": "in_progress",
+          "planning": {
+            "iteration": 3,
+            "totalAttempts": 3,
+            "tiebreakerUsed": false
+          },
+          "currentTask": "t01",
+          "tasks": {
+            "t01": {
+              "status": "completed",
+              "planning": {
+                "iteration": 1,
+                "totalAttempts": 1,
+                "tiebreakerUsed": false
+              },
+              "implementation": {
+                "iteration": 2,
+                "totalAttempts": 2,
+                "tiebreakerUsed": false
+              }
+            },
+            "t02": {
+              "status": "pending",
+              "planning": {
+                "iteration": 0,
+                "totalAttempts": 0,
+                "tiebreakerUsed": false
+              },
+              "implementation": {
+                "iteration": 0,
+                "totalAttempts": 0,
+                "tiebreakerUsed": false
+              }
+            },
+            "t03": {
+              "status": "pending",
+              "planning": {
+                "iteration": 0,
+                "totalAttempts": 0,
+                "tiebreakerUsed": false
+              },
+              "implementation": {
+                "iteration": 0,
+                "totalAttempts": 0,
+                "tiebreakerUsed": false
+              }
+            }
+          }
+        },
+        "p02": {
+          "status": "pending",
+          "planning": {
+            "iteration": 0,
+            "totalAttempts": 0,
+            "tiebreakerUsed": false
+          },
+          "currentTask": null,
+          "tasks": {}
+        }
+      }
     },
     "m10": {
       "status": "pending",
