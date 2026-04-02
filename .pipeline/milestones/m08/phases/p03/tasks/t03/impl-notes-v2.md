@@ -1,0 +1,1 @@
+- `.github/workflows/regression.yml` — Fixed critical path bug on line 51: wrapped `cd cutechess-src && cmake . && make ...` in a subshell `(cd cutechess-src && ...)` so the `cd` does not persist to line 52, which correctly copies from `cutechess-src/cutechess-cli` relative to the workspace root.
