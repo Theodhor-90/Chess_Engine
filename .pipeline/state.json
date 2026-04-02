@@ -1311,13 +1311,13 @@
       "currentPhase": "p01",
       "phases": {
         "p01": {
-          "status": "in_progress",
+          "status": "completed",
           "planning": {
             "iteration": 3,
             "totalAttempts": 3,
             "tiebreakerUsed": true
           },
-          "currentTask": "t03",
+          "currentTask": null,
           "tasks": {
             "t01": {
               "status": "completed",
