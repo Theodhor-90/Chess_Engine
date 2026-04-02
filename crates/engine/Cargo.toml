@@ -17,6 +17,7 @@ chess-search = { path = "../search" }
 chess-movegen = { path = "../movegen" }
 chess-board = { path = "../board" }
 chess-types = { path = "../types" }
+chess-nnue = { path = "../nnue" }
 anyhow = "1"
 rand = "0.8"
 fathom-syzygy = "0.1.0"

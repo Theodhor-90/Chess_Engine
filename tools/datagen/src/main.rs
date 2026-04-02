@@ -214,8 +214,15 @@ fn play_game(
         let callback: chess_search::DepthCallback<'_> = &|_depth, score, _nodes, _elapsed, _pv| {
             last_score.set(score);
         };
-        let best_move =
-            chess_search::search(&mut pos, limits, &hash_history, Some(&callback), None);
+        let best_move = chess_search::search(
+            &mut pos,
+            limits,
+            &hash_history,
+            Some(&callback),
+            None,
+            None,
+            chess_search::EvalMode::Classical,
+        );
 
         let score = last_score.get();
 

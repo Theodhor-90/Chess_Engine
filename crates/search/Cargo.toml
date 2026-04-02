@@ -8,3 +8,4 @@ chess-types = { path = "../types" }
 chess-board = { path = "../board" }
 chess-movegen = { path = "../movegen" }
 chess-eval = { path = "../eval" }
+chess-nnue = { path = "../nnue" }

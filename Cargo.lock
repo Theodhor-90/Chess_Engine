@@ -65,6 +65,7 @@ dependencies = [
  "chess-board",
  "chess-eval",
  "chess-movegen",
+ "chess-nnue",
  "chess-types",
 ]
 
@@ -100,6 +101,7 @@ dependencies = [
  "anyhow",
  "chess-board",
  "chess-movegen",
+ "chess-nnue",
  "chess-search",
  "chess-types",
  "chess-uci",

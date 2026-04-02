@@ -11,6 +11,8 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
+use chess_nnue::{Accumulator, Network};
+
 use chess_board::Position;
 use chess_types::{Color, Move, Piece, PieceKind, Square};
 
@@ -32,6 +34,12 @@ const SINGULAR_MARGIN: i32 = 64;
 const SINGULAR_MIN_DEPTH: u8 = 6;
 const ASPIRATION_DELTA: i32 = 25;
 const ASPIRATION_WIDEN_FACTOR: i32 = 4;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EvalMode {
+    Nnue,
+    Classical,
+}
 
 pub trait TbProber {
     fn probe_wdl(&mut self, pos: &Position) -> Option<i32>;
@@ -71,6 +79,9 @@ pub struct SearchContext {
     tt: TranspositionTable,
     history: Vec<u64>,
     pawn_table: chess_eval::PawnHashTable,
+    network: Option<Arc<Network>>,
+    eval_mode: EvalMode,
+    accumulator: Accumulator,
     pub(crate) lmr_enabled: bool,
     pub(crate) futility_enabled: bool,
     pub(crate) check_extension_enabled: bool,
@@ -126,6 +137,16 @@ fn king_square(pos: &Position, side: Color) -> Square {
     Square::new(sq_idx).expect("valid square")
 }
 
+fn eval_position(pos: &Position, ctx: &mut SearchContext) -> i32 {
+    if ctx.eval_mode == EvalMode::Nnue {
+        if let Some(ref network) = ctx.network {
+            ctx.accumulator.refresh(pos, network);
+            return chess_nnue::forward(&ctx.accumulator, network, pos.side_to_move());
+        }
+    }
+    chess_eval::evaluate(pos, &mut ctx.pawn_table)
+}
+
 #[allow(clippy::only_used_in_recursion)]
 pub fn quiescence(
     pos: &mut Position,
@@ -142,7 +163,7 @@ pub fn quiescence(
         return 0;
     }
 
-    let stand_pat = chess_eval::evaluate(pos, &mut ctx.pawn_table);
+    let stand_pat = eval_position(pos, ctx);
     if stand_pat >= beta {
         return beta;
     }
@@ -361,7 +382,7 @@ pub fn negamax(
     }
 
     let static_eval = if !in_check {
-        chess_eval::evaluate(pos, &mut ctx.pawn_table)
+        eval_position(pos, ctx)
     } else {
         0
     };
@@ -681,6 +702,8 @@ pub fn search(
     game_history: &[u64],
     on_depth: Option<DepthCallback<'_>>,
     mut tb_prober: Option<&mut dyn TbProber>,
+    network: Option<Arc<Network>>,
+    eval_mode: EvalMode,
 ) -> Option<Move> {
     let mut ctx = SearchContext {
         start: Instant::now(),
@@ -697,6 +720,9 @@ pub fn search(
         tt: TranspositionTable::new(64),
         history: game_history.to_vec(),
         pawn_table: chess_eval::PawnHashTable::new(),
+        network,
+        eval_mode,
+        accumulator: Accumulator::new(),
         lmr_enabled: true,
         futility_enabled: true,
         check_extension_enabled: true,
@@ -867,6 +893,9 @@ mod tests {
             tt: TranspositionTable::new(1),
             history: Vec::new(),
             pawn_table: chess_eval::PawnHashTable::new(),
+            network: None,
+            eval_mode: EvalMode::Classical,
+            accumulator: Accumulator::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -1002,7 +1031,7 @@ mod tests {
             max_nodes: None,
             stop_flag: None,
         };
-        let mv = search(&mut pos, limits, &[], None, None);
+        let mv = search(&mut pos, limits, &[], None, None, None, EvalMode::Classical);
         assert!(mv.is_some());
         let legal_moves = chess_movegen::generate_legal_moves(&mut pos);
         assert!(legal_moves.iter().any(|&m| m == mv.unwrap()));
@@ -1020,7 +1049,7 @@ mod tests {
             max_nodes: None,
             stop_flag: None,
         };
-        let mv = search(&mut pos, limits, &[], None, None);
+        let mv = search(&mut pos, limits, &[], None, None, None, EvalMode::Classical);
         assert!(mv.is_some());
         let best = mv.unwrap();
         assert_eq!(best.to_sq().index(), Square::new(53).unwrap().index());
@@ -1036,7 +1065,7 @@ mod tests {
             max_nodes: None,
             stop_flag: None,
         };
-        let mv = search(&mut pos, limits, &[], None, None);
+        let mv = search(&mut pos, limits, &[], None, None, None, EvalMode::Classical);
         let elapsed = start.elapsed();
         assert!(elapsed < Duration::from_millis(200));
         assert!(mv.is_some());
@@ -1053,7 +1082,7 @@ mod tests {
             max_nodes: None,
             stop_flag: None,
         };
-        let mv = search(&mut pos, limits, &[], None, None);
+        let mv = search(&mut pos, limits, &[], None, None, None, EvalMode::Classical);
         assert!(mv.is_none());
     }
 
@@ -1066,7 +1095,7 @@ mod tests {
             max_nodes: None,
             stop_flag: None,
         };
-        let mv = search(&mut pos, limits, &[], None, None);
+        let mv = search(&mut pos, limits, &[], None, None, None, EvalMode::Classical);
         assert!(mv.is_none());
     }
 
@@ -1102,6 +1131,9 @@ mod tests {
             tt: TranspositionTable::new(1),
             history: Vec::new(),
             pawn_table: chess_eval::PawnHashTable::new(),
+            network: None,
+            eval_mode: EvalMode::Classical,
+            accumulator: Accumulator::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -1143,6 +1175,9 @@ mod tests {
             tt: TranspositionTable::new(0),
             history: Vec::new(),
             pawn_table: chess_eval::PawnHashTable::new(),
+            network: None,
+            eval_mode: EvalMode::Classical,
+            accumulator: Accumulator::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -1196,7 +1231,7 @@ mod tests {
             max_nodes: None,
             stop_flag: Some(stop),
         };
-        let mv = search(&mut pos, limits, &[], None, None);
+        let mv = search(&mut pos, limits, &[], None, None, None, EvalMode::Classical);
         let elapsed = start.elapsed();
 
         assert!(
@@ -1227,7 +1262,15 @@ mod tests {
         let cb = move |depth: u8, _score: i32, _nodes: u64, _elapsed: Duration, _pv: &[Move]| {
             max_depth_clone.fetch_max(depth, Ordering::Relaxed);
         };
-        let mv = search(&mut pos, limits, &[], Some(&cb), None);
+        let mv = search(
+            &mut pos,
+            limits,
+            &[],
+            Some(&cb),
+            None,
+            None,
+            EvalMode::Classical,
+        );
         assert!(mv.is_some());
         assert_eq!(max_depth_seen.load(Ordering::Relaxed), 3);
     }
@@ -1242,7 +1285,7 @@ mod tests {
             max_nodes: Some(500),
             stop_flag: None,
         };
-        let mv = search(&mut pos, limits, &[], None, None);
+        let mv = search(&mut pos, limits, &[], None, None, None, EvalMode::Classical);
         let elapsed = start.elapsed();
         assert!(mv.is_some());
         assert!(
@@ -1262,7 +1305,7 @@ mod tests {
             max_nodes: None,
             stop_flag: None,
         };
-        let mv = search(&mut pos, limits, &[], None, None);
+        let mv = search(&mut pos, limits, &[], None, None, None, EvalMode::Classical);
         let elapsed = start.elapsed();
         assert!(mv.is_some());
         assert!(
@@ -1294,6 +1337,9 @@ mod tests {
             tt: TranspositionTable::new(1),
             history: Vec::new(),
             pawn_table: chess_eval::PawnHashTable::new(),
+            network: None,
+            eval_mode: EvalMode::Classical,
+            accumulator: Accumulator::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -1335,6 +1381,9 @@ mod tests {
             tt: TranspositionTable::new(0),
             history: Vec::new(),
             pawn_table: chess_eval::PawnHashTable::new(),
+            network: None,
+            eval_mode: EvalMode::Classical,
+            accumulator: Accumulator::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -1388,6 +1437,9 @@ mod tests {
             tt: TranspositionTable::new(1),
             history: Vec::new(),
             pawn_table: chess_eval::PawnHashTable::new(),
+            network: None,
+            eval_mode: EvalMode::Classical,
+            accumulator: Accumulator::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -1449,6 +1501,9 @@ mod tests {
             tt: TranspositionTable::new(1),
             history: Vec::new(),
             pawn_table: chess_eval::PawnHashTable::new(),
+            network: None,
+            eval_mode: EvalMode::Classical,
+            accumulator: Accumulator::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -1499,6 +1554,9 @@ mod tests {
                 tt: TranspositionTable::new(1),
                 history: Vec::new(),
                 pawn_table: chess_eval::PawnHashTable::new(),
+                network: None,
+                eval_mode: EvalMode::Classical,
+                accumulator: Accumulator::new(),
                 lmr_enabled: true,
                 futility_enabled: true,
                 check_extension_enabled: true,
@@ -1576,6 +1634,9 @@ mod tests {
             tt: TranspositionTable::new(1),
             history: Vec::new(),
             pawn_table: chess_eval::PawnHashTable::new(),
+            network: None,
+            eval_mode: EvalMode::Classical,
+            accumulator: Accumulator::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -1629,6 +1690,9 @@ mod tests {
             tt: TranspositionTable::new(1),
             history: Vec::new(),
             pawn_table: chess_eval::PawnHashTable::new(),
+            network: None,
+            eval_mode: EvalMode::Classical,
+            accumulator: Accumulator::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -1670,6 +1734,9 @@ mod tests {
             tt: TranspositionTable::new(0),
             history: Vec::new(),
             pawn_table: chess_eval::PawnHashTable::new(),
+            network: None,
+            eval_mode: EvalMode::Classical,
+            accumulator: Accumulator::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -1723,6 +1790,9 @@ mod tests {
             tt: TranspositionTable::new(1),
             history: Vec::new(),
             pawn_table: chess_eval::PawnHashTable::new(),
+            network: None,
+            eval_mode: EvalMode::Classical,
+            accumulator: Accumulator::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -1764,6 +1834,9 @@ mod tests {
             tt: TranspositionTable::new(0),
             history: Vec::new(),
             pawn_table: chess_eval::PawnHashTable::new(),
+            network: None,
+            eval_mode: EvalMode::Classical,
+            accumulator: Accumulator::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -1815,6 +1888,9 @@ mod tests {
             tt: TranspositionTable::new(1),
             history: Vec::new(),
             pawn_table: chess_eval::PawnHashTable::new(),
+            network: None,
+            eval_mode: EvalMode::Classical,
+            accumulator: Accumulator::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -1837,6 +1913,9 @@ mod tests {
             tt: TranspositionTable::new(1),
             history: Vec::new(),
             pawn_table: chess_eval::PawnHashTable::new(),
+            network: None,
+            eval_mode: EvalMode::Classical,
+            accumulator: Accumulator::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -1879,6 +1958,9 @@ mod tests {
             tt: TranspositionTable::new(1),
             history: Vec::new(),
             pawn_table: chess_eval::PawnHashTable::new(),
+            network: None,
+            eval_mode: EvalMode::Classical,
+            accumulator: Accumulator::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -1925,6 +2007,9 @@ mod tests {
             tt: TranspositionTable::new(1),
             history: vec![current_hash, current_hash],
             pawn_table: chess_eval::PawnHashTable::new(),
+            network: None,
+            eval_mode: EvalMode::Classical,
+            accumulator: Accumulator::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -1979,7 +2064,15 @@ mod tests {
             max_nodes: None,
             stop_flag: None,
         };
-        let mv = search(&mut pos, limits, &game_history, None, None);
+        let mv = search(
+            &mut pos,
+            limits,
+            &game_history,
+            None,
+            None,
+            None,
+            EvalMode::Classical,
+        );
 
         assert!(mv.is_some(), "engine should find a move");
         // Re-search to get the score
@@ -2005,6 +2098,9 @@ mod tests {
             tt: TranspositionTable::new(1),
             history: vec![current_hash],
             pawn_table: chess_eval::PawnHashTable::new(),
+            network: None,
+            eval_mode: EvalMode::Classical,
+            accumulator: Accumulator::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -2065,6 +2161,9 @@ mod tests {
             tt: TranspositionTable::new(1),
             history: vec![child_hash, 0, root_hash],
             pawn_table: chess_eval::PawnHashTable::new(),
+            network: None,
+            eval_mode: EvalMode::Classical,
+            accumulator: Accumulator::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -2093,6 +2192,9 @@ mod tests {
             tt: TranspositionTable::new(1),
             history: Vec::new(),
             pawn_table: chess_eval::PawnHashTable::new(),
+            network: None,
+            eval_mode: EvalMode::Classical,
+            accumulator: Accumulator::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -2142,6 +2244,9 @@ mod tests {
             tt: TranspositionTable::new(1),
             history: Vec::new(),
             pawn_table: chess_eval::PawnHashTable::new(),
+            network: None,
+            eval_mode: EvalMode::Classical,
+            accumulator: Accumulator::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -2179,6 +2284,9 @@ mod tests {
             tt: TranspositionTable::new(1),
             history: Vec::new(),
             pawn_table: chess_eval::PawnHashTable::new(),
+            network: None,
+            eval_mode: EvalMode::Classical,
+            accumulator: Accumulator::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -2231,6 +2339,9 @@ mod tests {
             tt: TranspositionTable::new(1),
             history: Vec::new(),
             pawn_table: chess_eval::PawnHashTable::new(),
+            network: None,
+            eval_mode: EvalMode::Classical,
+            accumulator: Accumulator::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -2258,6 +2369,9 @@ mod tests {
             tt: TranspositionTable::new(1),
             history: Vec::new(),
             pawn_table: chess_eval::PawnHashTable::new(),
+            network: None,
+            eval_mode: EvalMode::Classical,
+            accumulator: Accumulator::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -2299,6 +2413,9 @@ mod tests {
             tt: TranspositionTable::new(1),
             history: Vec::new(),
             pawn_table: chess_eval::PawnHashTable::new(),
+            network: None,
+            eval_mode: EvalMode::Classical,
+            accumulator: Accumulator::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -2326,6 +2443,9 @@ mod tests {
             tt: TranspositionTable::new(1),
             history: Vec::new(),
             pawn_table: chess_eval::PawnHashTable::new(),
+            network: None,
+            eval_mode: EvalMode::Classical,
+            accumulator: Accumulator::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -2367,6 +2487,9 @@ mod tests {
             tt: TranspositionTable::new(1),
             history: Vec::new(),
             pawn_table: chess_eval::PawnHashTable::new(),
+            network: None,
+            eval_mode: EvalMode::Classical,
+            accumulator: Accumulator::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -2394,6 +2517,9 @@ mod tests {
             tt: TranspositionTable::new(1),
             history: Vec::new(),
             pawn_table: chess_eval::PawnHashTable::new(),
+            network: None,
+            eval_mode: EvalMode::Classical,
+            accumulator: Accumulator::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -2433,7 +2559,7 @@ mod tests {
                 max_nodes: None,
                 stop_flag: None,
             };
-            let mv = search(&mut pos, limits, &[], None, None);
+            let mv = search(&mut pos, limits, &[], None, None, None, EvalMode::Classical);
             assert!(mv.is_some(), "should find a move for FEN: {}", fen);
             assert_eq!(
                 mv.unwrap().to_sq(),
@@ -2490,6 +2616,9 @@ mod tests {
                 tt: TranspositionTable::new(16),
                 history: Vec::new(),
                 pawn_table: chess_eval::PawnHashTable::new(),
+                network: None,
+                eval_mode: EvalMode::Classical,
+                accumulator: Accumulator::new(),
                 lmr_enabled: true,
                 futility_enabled: true,
                 check_extension_enabled: true,
@@ -2531,6 +2660,9 @@ mod tests {
                 tt: TranspositionTable::new(16),
                 history: Vec::new(),
                 pawn_table: chess_eval::PawnHashTable::new(),
+                network: None,
+                eval_mode: EvalMode::Classical,
+                accumulator: Accumulator::new(),
                 lmr_enabled: false,
                 futility_enabled: true,
                 check_extension_enabled: true,
@@ -2586,7 +2718,15 @@ mod tests {
                 max_nodes: None,
                 stop_flag: None,
             };
-            let mv_lmr = search(&mut pos_lmr, limits_lmr, &[], None, None);
+            let mv_lmr = search(
+                &mut pos_lmr,
+                limits_lmr,
+                &[],
+                None,
+                None,
+                None,
+                EvalMode::Classical,
+            );
 
             let mut pos_no_lmr = Position::from_fen(fen).expect("valid fen");
             let mut ctx_no_lmr = SearchContext {
@@ -2604,6 +2744,9 @@ mod tests {
                 tt: TranspositionTable::new(64),
                 history: Vec::new(),
                 pawn_table: chess_eval::PawnHashTable::new(),
+                network: None,
+                eval_mode: EvalMode::Classical,
+                accumulator: Accumulator::new(),
                 lmr_enabled: false,
                 futility_enabled: true,
                 check_extension_enabled: true,
@@ -2687,6 +2830,9 @@ mod tests {
             tt: TranspositionTable::new(0),
             history: Vec::new(),
             pawn_table: chess_eval::PawnHashTable::new(),
+            network: None,
+            eval_mode: EvalMode::Classical,
+            accumulator: Accumulator::new(),
             lmr_enabled: false,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -2727,6 +2873,9 @@ mod tests {
             tt: TranspositionTable::new(0),
             history: Vec::new(),
             pawn_table: chess_eval::PawnHashTable::new(),
+            network: None,
+            eval_mode: EvalMode::Classical,
+            accumulator: Accumulator::new(),
             lmr_enabled: false,
             futility_enabled: false,
             check_extension_enabled: true,
@@ -2782,6 +2931,9 @@ mod tests {
             tt: TranspositionTable::new(1),
             history: Vec::new(),
             pawn_table: chess_eval::PawnHashTable::new(),
+            network: None,
+            eval_mode: EvalMode::Classical,
+            accumulator: Accumulator::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -2819,6 +2971,9 @@ mod tests {
             tt: TranspositionTable::new(1),
             history: Vec::new(),
             pawn_table: chess_eval::PawnHashTable::new(),
+            network: None,
+            eval_mode: EvalMode::Classical,
+            accumulator: Accumulator::new(),
             lmr_enabled: true,
             futility_enabled: false,
             check_extension_enabled: true,
@@ -2870,6 +3025,9 @@ mod tests {
             tt: TranspositionTable::new(1),
             history: Vec::new(),
             pawn_table: chess_eval::PawnHashTable::new(),
+            network: None,
+            eval_mode: EvalMode::Classical,
+            accumulator: Accumulator::new(),
             lmr_enabled: false,
             futility_enabled: true,
             check_extension_enabled: false,
@@ -2912,6 +3070,9 @@ mod tests {
                 tt: TranspositionTable::new(1),
                 history: Vec::new(),
                 pawn_table: chess_eval::PawnHashTable::new(),
+                network: None,
+                eval_mode: EvalMode::Classical,
+                accumulator: Accumulator::new(),
                 lmr_enabled: false,
                 futility_enabled: false,
                 check_extension_enabled: false,
@@ -2956,6 +3117,9 @@ mod tests {
                 tt: TranspositionTable::new(1),
                 history: Vec::new(),
                 pawn_table: chess_eval::PawnHashTable::new(),
+                network: None,
+                eval_mode: EvalMode::Classical,
+                accumulator: Accumulator::new(),
                 lmr_enabled: false,
                 futility_enabled: true,
                 check_extension_enabled: false,
@@ -2992,6 +3156,9 @@ mod tests {
                 tt: TranspositionTable::new(1),
                 history: Vec::new(),
                 pawn_table: chess_eval::PawnHashTable::new(),
+                network: None,
+                eval_mode: EvalMode::Classical,
+                accumulator: Accumulator::new(),
                 lmr_enabled: false,
                 futility_enabled: false,
                 check_extension_enabled: false,
@@ -3042,7 +3209,7 @@ mod tests {
                 max_nodes: None,
                 stop_flag: None,
             };
-            let mv = search(&mut pos, limits, &[], None, None);
+            let mv = search(&mut pos, limits, &[], None, None, None, EvalMode::Classical);
             assert!(mv.is_some(), "should find a move for FEN: {}", fen);
             assert_eq!(
                 mv.unwrap().to_sq(),
@@ -3099,6 +3266,9 @@ mod tests {
                 tt: TranspositionTable::new(16),
                 history: Vec::new(),
                 pawn_table: chess_eval::PawnHashTable::new(),
+                network: None,
+                eval_mode: EvalMode::Classical,
+                accumulator: Accumulator::new(),
                 lmr_enabled: true,
                 futility_enabled: true,
                 check_extension_enabled: true,
@@ -3149,6 +3319,9 @@ mod tests {
                 tt: TranspositionTable::new(16),
                 history: Vec::new(),
                 pawn_table: chess_eval::PawnHashTable::new(),
+                network: None,
+                eval_mode: EvalMode::Classical,
+                accumulator: Accumulator::new(),
                 lmr_enabled: true,
                 futility_enabled: false,
                 check_extension_enabled: true,
@@ -3216,6 +3389,9 @@ mod tests {
             tt: TranspositionTable::new(16),
             history: Vec::new(),
             pawn_table: chess_eval::PawnHashTable::new(),
+            network: None,
+            eval_mode: EvalMode::Classical,
+            accumulator: Accumulator::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -3258,6 +3434,9 @@ mod tests {
             tt: TranspositionTable::new(16),
             history: Vec::new(),
             pawn_table: chess_eval::PawnHashTable::new(),
+            network: None,
+            eval_mode: EvalMode::Classical,
+            accumulator: Accumulator::new(),
             lmr_enabled: true,
             futility_enabled: false,
             check_extension_enabled: true,
@@ -3298,6 +3477,9 @@ mod tests {
             tt: TranspositionTable::new(16),
             history: Vec::new(),
             pawn_table: chess_eval::PawnHashTable::new(),
+            network: None,
+            eval_mode: EvalMode::Classical,
+            accumulator: Accumulator::new(),
             lmr_enabled: false,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -3348,6 +3530,9 @@ mod tests {
                 tt: TranspositionTable::new(16),
                 history: Vec::new(),
                 pawn_table: chess_eval::PawnHashTable::new(),
+                network: None,
+                eval_mode: EvalMode::Classical,
+                accumulator: Accumulator::new(),
                 lmr_enabled: true,
                 futility_enabled: true,
                 check_extension_enabled: true,
@@ -3395,6 +3580,9 @@ mod tests {
                 tt: TranspositionTable::new(16),
                 history: Vec::new(),
                 pawn_table: chess_eval::PawnHashTable::new(),
+                network: None,
+                eval_mode: EvalMode::Classical,
+                accumulator: Accumulator::new(),
                 lmr_enabled: false,
                 futility_enabled: true,
                 check_extension_enabled: true,
@@ -3459,6 +3647,9 @@ mod tests {
             tt: TranspositionTable::new(1),
             history: Vec::new(),
             pawn_table: chess_eval::PawnHashTable::new(),
+            network: None,
+            eval_mode: EvalMode::Classical,
+            accumulator: Accumulator::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -3495,6 +3686,9 @@ mod tests {
             tt: TranspositionTable::new(1),
             history: Vec::new(),
             pawn_table: chess_eval::PawnHashTable::new(),
+            network: None,
+            eval_mode: EvalMode::Classical,
+            accumulator: Accumulator::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: false,
@@ -3541,6 +3735,9 @@ mod tests {
             tt: TranspositionTable::new(1),
             history: Vec::new(),
             pawn_table: chess_eval::PawnHashTable::new(),
+            network: None,
+            eval_mode: EvalMode::Classical,
+            accumulator: Accumulator::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -3577,6 +3774,9 @@ mod tests {
             tt: TranspositionTable::new(1),
             history: Vec::new(),
             pawn_table: chess_eval::PawnHashTable::new(),
+            network: None,
+            eval_mode: EvalMode::Classical,
+            accumulator: Accumulator::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: false,
@@ -3643,6 +3843,9 @@ mod tests {
                 tt: TranspositionTable::new(16),
                 history: Vec::new(),
                 pawn_table: chess_eval::PawnHashTable::new(),
+                network: None,
+                eval_mode: EvalMode::Classical,
+                accumulator: Accumulator::new(),
                 lmr_enabled: true,
                 futility_enabled: true,
                 check_extension_enabled: true,
@@ -3692,6 +3895,9 @@ mod tests {
                 tt: TranspositionTable::new(16),
                 history: Vec::new(),
                 pawn_table: chess_eval::PawnHashTable::new(),
+                network: None,
+                eval_mode: EvalMode::Classical,
+                accumulator: Accumulator::new(),
                 lmr_enabled: true,
                 futility_enabled: true,
                 check_extension_enabled: false,
@@ -3772,6 +3978,9 @@ mod tests {
                 tt: TranspositionTable::new(16),
                 history: Vec::new(),
                 pawn_table: chess_eval::PawnHashTable::new(),
+                network: None,
+                eval_mode: EvalMode::Classical,
+                accumulator: Accumulator::new(),
                 lmr_enabled: true,
                 futility_enabled: true,
                 check_extension_enabled: true,
@@ -3833,6 +4042,9 @@ mod tests {
                 tt: TranspositionTable::new(16),
                 history: Vec::new(),
                 pawn_table: chess_eval::PawnHashTable::new(),
+                network: None,
+                eval_mode: EvalMode::Classical,
+                accumulator: Accumulator::new(),
                 lmr_enabled: true,
                 futility_enabled: true,
                 check_extension_enabled: true,
@@ -3890,6 +4102,9 @@ mod tests {
                 tt: TranspositionTable::new(16),
                 history: Vec::new(),
                 pawn_table: chess_eval::PawnHashTable::new(),
+                network: None,
+                eval_mode: EvalMode::Classical,
+                accumulator: Accumulator::new(),
                 lmr_enabled: true,
                 futility_enabled: true,
                 check_extension_enabled: true,
@@ -3935,6 +4150,9 @@ mod tests {
                 tt: TranspositionTable::new(16),
                 history: Vec::new(),
                 pawn_table: chess_eval::PawnHashTable::new(),
+                network: None,
+                eval_mode: EvalMode::Classical,
+                accumulator: Accumulator::new(),
                 lmr_enabled: false,
                 futility_enabled: true,
                 check_extension_enabled: true,
@@ -3994,5 +4212,73 @@ mod tests {
                 nodes_without_lmr,
             );
         }
+    }
+
+    #[test]
+    fn eval_dispatch_classical_fallback_when_no_network() {
+        let pos = Position::startpos();
+        let mut ctx = test_ctx();
+        ctx.eval_mode = EvalMode::Nnue;
+        ctx.network = None;
+        let nnue_result = eval_position(&pos, &mut ctx);
+        let classical = chess_eval::evaluate(&pos, &mut ctx.pawn_table);
+        assert_eq!(nnue_result, classical);
+    }
+
+    #[test]
+    fn eval_dispatch_classical_when_mode_classical() {
+        let pos = Position::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
+            .expect("valid fen");
+        let network = Arc::new(Network::new_zeroed());
+        let mut ctx = test_ctx();
+        ctx.eval_mode = EvalMode::Classical;
+        ctx.network = Some(network);
+        let result = eval_position(&pos, &mut ctx);
+        let classical = chess_eval::evaluate(&pos, &mut ctx.pawn_table);
+        assert_eq!(result, classical);
+    }
+
+    #[test]
+    fn eval_dispatch_nnue_when_network_loaded() {
+        // White up a queen: classical eval should be non-zero, NNUE with zeroed net returns 0
+        let pos = Position::from_fen("4k3/8/8/8/8/8/8/Q3K3 w - - 0 1").expect("valid fen");
+        let network = Arc::new(Network::new_zeroed());
+        let mut ctx = test_ctx();
+        ctx.eval_mode = EvalMode::Nnue;
+        ctx.network = Some(network);
+        let result = eval_position(&pos, &mut ctx);
+        // A zeroed network produces 0 from forward pass
+        assert_eq!(result, 0);
+        // Verify classical eval would be non-zero for this position
+        let classical = chess_eval::evaluate(&pos, &mut ctx.pawn_table);
+        assert_ne!(classical, 0);
+    }
+
+    #[test]
+    fn search_valid_bestmove_both_modes() {
+        let mut pos = Position::startpos();
+        let limits = SearchLimits {
+            max_time: Duration::from_secs(5),
+            max_depth: Some(4),
+            max_nodes: None,
+            stop_flag: None,
+        };
+        let mv_classical = search(
+            &mut pos,
+            limits.clone(),
+            &[],
+            None,
+            None,
+            None,
+            EvalMode::Classical,
+        );
+        assert!(mv_classical.is_some());
+
+        // With no network loaded, NNUE mode falls back to classical and still produces a move
+        let mv_nnue = search(&mut pos, limits, &[], None, None, None, EvalMode::Nnue);
+        assert!(mv_nnue.is_some());
+
+        // Both should return the same move since no network is loaded (both use classical)
+        assert_eq!(mv_classical, mv_nnue);
     }
 }
