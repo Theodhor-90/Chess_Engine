@@ -2,8 +2,3 @@
 name = "sprt"
 version = "0.1.0"
 edition.workspace = true
-
-[dependencies]
-chess-types = { path = "../../crates/types" }
-chess-board = { path = "../../crates/board" }
-chess-movegen = { path = "../../crates/movegen" }

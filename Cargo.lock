@@ -117,11 +117,6 @@ dependencies = [
 [[package]]
 name = "sprt"
 version = "0.1.0"
-dependencies = [
- "chess-board",
- "chess-movegen",
- "chess-types",
-]
 
 [[package]]
 name = "syn"
