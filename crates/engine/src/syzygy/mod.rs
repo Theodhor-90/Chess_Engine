@@ -112,6 +112,49 @@ impl chess_search::TbProber for SyzygyProberAdapter {
     }
 }
 
+pub struct LazySyzygyTablebase {
+    path: String,
+    inner: Option<SyzygyTablebase>,
+    probe_limit: u8,
+}
+
+impl LazySyzygyTablebase {
+    pub fn new(path: String, probe_limit: u8) -> Self {
+        LazySyzygyTablebase {
+            path,
+            inner: None,
+            probe_limit,
+        }
+    }
+
+    fn ensure_init(&mut self) -> Option<&mut SyzygyTablebase> {
+        if self.inner.is_none() && !self.path.is_empty() {
+            match SyzygyTablebase::init(&self.path) {
+                Ok(tb) => self.inner = Some(tb),
+                Err(e) => eprintln!("Syzygy init error: {e}"),
+            }
+        }
+        self.inner.as_mut()
+    }
+}
+
+impl chess_search::TbProber for LazySyzygyTablebase {
+    fn probe_wdl(&mut self, pos: &Position) -> Option<i32> {
+        let limit = self.probe_limit;
+        let tb = self.ensure_init()?;
+        let wdl = tb.probe_wdl(pos, limit)?;
+        Some(wdl_to_score(wdl))
+    }
+
+    fn probe_root(&mut self, pos: &Position) -> Option<(i32, i32)> {
+        let limit = self.probe_limit;
+        let tb = self.ensure_init()?;
+        let wdl = tb.probe_wdl(pos, limit)?;
+        let dtz = tb.probe_dtz(pos, limit)?;
+        Some((wdl_to_score(wdl), dtz.0))
+    }
+}
+
 fn convert_wdl(wdl: fathom_syzygy::Wdl) -> Wdl {
     match wdl {
         fathom_syzygy::Wdl::Loss => Wdl::Loss,
@@ -177,6 +220,29 @@ mod tests {
         // 32 pieces > probe_limit of 6 → should return None without probing
         let result = tb.probe_wdl(&pos, 6);
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn lazy_no_path_returns_none() {
+        use chess_search::TbProber;
+        let mut lazy = LazySyzygyTablebase::new(String::new(), 6);
+        let pos = Position::from_fen("8/8/8/8/8/4K3/8/2k1R3 w - - 0 1").unwrap();
+        assert!(lazy.probe_wdl(&pos).is_none());
+    }
+
+    #[test]
+    fn lazy_init_deferred() {
+        let lazy = LazySyzygyTablebase::new("/some/path".to_string(), 6);
+        assert!(lazy.inner.is_none());
+    }
+
+    #[test]
+    fn lazy_probe_limit_respected() {
+        use chess_search::TbProber;
+        let mut lazy = LazySyzygyTablebase::new(String::new(), 4);
+        // KRK + 2 pawns = 5 pieces, exceeds probe_limit of 4
+        let pos = Position::from_fen("8/8/8/8/1p1P4/4K3/8/2k1R3 w - - 0 1").unwrap();
+        assert!(lazy.probe_wdl(&pos).is_none());
     }
 
     #[test]

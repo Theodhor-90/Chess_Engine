@@ -38,9 +38,7 @@ pub trait TbProber {
     fn probe_root(&mut self, pos: &Position) -> Option<(i32, i32)>;
 }
 
-fn reborrow_prober<'a>(
-    prober: &'a mut Option<&mut dyn TbProber>,
-) -> Option<&'a mut dyn TbProber> {
+fn reborrow_prober<'a>(prober: &'a mut Option<&mut dyn TbProber>) -> Option<&'a mut dyn TbProber> {
     match prober {
         Some(ref mut p) => Some(&mut **p),
         None => None,
@@ -1399,8 +1397,7 @@ mod tests {
         for d in 1..=4u8 {
             ctx.pv_table.clear();
             negamax(
-                &mut pos, d, -INFINITY, INFINITY, 0, true, &mut ctx, None, None,
-                None,
+                &mut pos, d, -INFINITY, INFINITY, 0, true, &mut ctx, None, None, None,
             );
             ctx.prev_pv = ctx.pv_table.extract_pv();
         }
@@ -1511,8 +1508,7 @@ mod tests {
             for d in 1..=4u8 {
                 ctx.pv_table.clear();
                 negamax(
-                    &mut pos, d, -INFINITY, INFINITY, 0, true, &mut ctx, None, None,
-                    None,
+                    &mut pos, d, -INFINITY, INFINITY, 0, true, &mut ctx, None, None, None,
                 );
                 ctx.prev_pv = ctx.pv_table.extract_pv();
             }
@@ -3231,8 +3227,7 @@ mod tests {
         for d in 1..=depth {
             ctx.pv_table.clear();
             let (_, mv) = negamax(
-                &mut pos, d, -INFINITY, INFINITY, 0, true, &mut ctx, None, None,
-                None,
+                &mut pos, d, -INFINITY, INFINITY, 0, true, &mut ctx, None, None, None,
             );
             ctx.prev_pv = ctx.pv_table.extract_pv();
             if mv.is_some() {
@@ -3274,8 +3269,7 @@ mod tests {
         for d in 1..=depth {
             ctx2.pv_table.clear();
             let (_, mv) = negamax(
-                &mut pos2, d, -INFINITY, INFINITY, 0, true, &mut ctx2, None, None,
-                None,
+                &mut pos2, d, -INFINITY, INFINITY, 0, true, &mut ctx2, None, None, None,
             );
             ctx2.prev_pv = ctx2.pv_table.extract_pv();
             if mv.is_some() {
@@ -3315,8 +3309,7 @@ mod tests {
         for d in 1..=depth {
             ctx3.pv_table.clear();
             let (_, mv) = negamax(
-                &mut pos3, d, -INFINITY, INFINITY, 0, true, &mut ctx3, None, None,
-                None,
+                &mut pos3, d, -INFINITY, INFINITY, 0, true, &mut ctx3, None, None, None,
             );
             ctx3.prev_pv = ctx3.pv_table.extract_pv();
             if mv.is_some() {
@@ -3790,8 +3783,7 @@ mod tests {
             for d in 1..=depth {
                 ctx.pv_table.clear();
                 let (_, mv) = negamax(
-                    &mut pos, d, -INFINITY, INFINITY, 0, true, &mut ctx, None, None,
-                    None,
+                    &mut pos, d, -INFINITY, INFINITY, 0, true, &mut ctx, None, None, None,
                 );
                 ctx.prev_pv = ctx.pv_table.extract_pv();
                 if mv.is_some() {
@@ -3851,8 +3843,7 @@ mod tests {
             for d in 1..=depth {
                 ctx.pv_table.clear();
                 negamax(
-                    &mut pos, d, -INFINITY, INFINITY, 0, true, &mut ctx, None, None,
-                    None,
+                    &mut pos, d, -INFINITY, INFINITY, 0, true, &mut ctx, None, None, None,
                 );
                 ctx.prev_pv = ctx.pv_table.extract_pv();
             }
