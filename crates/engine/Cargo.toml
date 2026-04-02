@@ -18,3 +18,4 @@ chess-movegen = { path = "../movegen" }
 chess-board = { path = "../board" }
 chess-types = { path = "../types" }
 anyhow = "1"
+rand = "0.8"

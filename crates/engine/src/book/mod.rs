@@ -1,5 +1,6 @@
 use chess_board::{CastlingRights, Position};
 use chess_types::{Bitboard, Color, File, Move, Piece, PieceKind, Rank, Square};
+use rand::Rng;
 
 /// The 781 Polyglot Zobrist random values.
 /// Layout: RANDOM_PIECE[768] + RANDOM_CASTLE[4] + RANDOM_EN_PASSANT[8] + RANDOM_TURN[1]
@@ -400,6 +401,49 @@ pub fn polyglot_move_to_engine_move(pos: &mut Position, raw_move: u16) -> Option
     })
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BookMode {
+    BestMove,
+    Weighted,
+}
+
+pub fn select_book_move(
+    pos: &mut Position,
+    entries: &[PolyglotEntry],
+    mode: BookMode,
+) -> Option<Move> {
+    if entries.is_empty() {
+        return None;
+    }
+    match mode {
+        BookMode::BestMove => {
+            let mut best = &entries[0];
+            for entry in &entries[1..] {
+                if entry.weight > best.weight {
+                    best = entry;
+                }
+            }
+            polyglot_move_to_engine_move(pos, best.raw_move)
+        }
+        BookMode::Weighted => {
+            let total_weight: u32 = entries.iter().map(|e| e.weight as u32).sum();
+            if total_weight == 0 {
+                return None;
+            }
+            let mut rng = rand::thread_rng();
+            let threshold = rng.gen_range(0..total_weight);
+            let mut acc: u32 = 0;
+            for entry in entries {
+                acc += entry.weight as u32;
+                if acc > threshold {
+                    return polyglot_move_to_engine_move(pos, entry.raw_move);
+                }
+            }
+            None
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -531,5 +575,125 @@ mod tests {
             .into_iter()
             .find(|mv| mv.from_sq() == from && mv.to_sq() == to && mv.promotion_piece() == promo)
             .expect("legal move not found")
+    }
+
+    // Polyglot raw_move encoding helpers for startpos legal moves
+    // e2->e4: from=(4,1) to=(4,3)
+    const RAW_E2E4: u16 = 4 | (3 << 3) | (4 << 6) | (1 << 9);
+    // d2->d4: from=(3,1) to=(3,3)
+    const RAW_D2D4: u16 = 3 | (3 << 3) | (3 << 6) | (1 << 9);
+    // g1->f3: from=(6,0) to=(5,2)
+    const RAW_G1F3: u16 = 5 | (2 << 3) | (6 << 6) | (0 << 9);
+
+    #[test]
+    fn bestmove_returns_highest_weight() {
+        let mut pos = Position::startpos();
+        let entries = vec![
+            PolyglotEntry {
+                key: 0,
+                raw_move: RAW_E2E4,
+                weight: 100,
+                learn: 0,
+            },
+            PolyglotEntry {
+                key: 0,
+                raw_move: RAW_D2D4,
+                weight: 300,
+                learn: 0,
+            },
+            PolyglotEntry {
+                key: 0,
+                raw_move: RAW_G1F3,
+                weight: 200,
+                learn: 0,
+            },
+        ];
+        let mv = select_book_move(&mut pos, &entries, BookMode::BestMove).unwrap();
+        assert_eq!(mv.from_sq(), Square::D2);
+        assert_eq!(mv.to_sq(), Square::D4);
+    }
+
+    #[test]
+    fn bestmove_deterministic_tie_breaking() {
+        let mut pos = Position::startpos();
+        let entries = vec![
+            PolyglotEntry {
+                key: 0,
+                raw_move: RAW_E2E4,
+                weight: 200,
+                learn: 0,
+            },
+            PolyglotEntry {
+                key: 0,
+                raw_move: RAW_D2D4,
+                weight: 200,
+                learn: 0,
+            },
+            PolyglotEntry {
+                key: 0,
+                raw_move: RAW_G1F3,
+                weight: 100,
+                learn: 0,
+            },
+        ];
+        let mv = select_book_move(&mut pos, &entries, BookMode::BestMove).unwrap();
+        // First entry with max weight should be selected
+        assert_eq!(mv.from_sq(), Square::E2);
+        assert_eq!(mv.to_sq(), Square::E4);
+    }
+
+    #[test]
+    fn empty_entries_returns_none() {
+        let mut pos = Position::startpos();
+        assert!(select_book_move(&mut pos, &[], BookMode::BestMove).is_none());
+        assert!(select_book_move(&mut pos, &[], BookMode::Weighted).is_none());
+    }
+
+    #[test]
+    fn weighted_distribution_consistent() {
+        let entries = vec![
+            PolyglotEntry {
+                key: 0,
+                raw_move: RAW_E2E4,
+                weight: 900,
+                learn: 0,
+            },
+            PolyglotEntry {
+                key: 0,
+                raw_move: RAW_D2D4,
+                weight: 100,
+                learn: 0,
+            },
+        ];
+        let mut high_count = 0u32;
+        let iterations = 10_000;
+        for _ in 0..iterations {
+            let mut pos = Position::startpos();
+            let mv = select_book_move(&mut pos, &entries, BookMode::Weighted).unwrap();
+            if mv.from_sq() == Square::E2 && mv.to_sq() == Square::E4 {
+                high_count += 1;
+            }
+        }
+        // 900/(900+100) = 90%, assert >80% with wide margin
+        assert!(
+            high_count > (iterations * 80 / 100),
+            "high-weight move selected {} out of {} times",
+            high_count,
+            iterations
+        );
+    }
+
+    #[test]
+    fn single_entry_always_selected() {
+        let entries = vec![PolyglotEntry {
+            key: 0,
+            raw_move: RAW_E2E4,
+            weight: 50,
+            learn: 0,
+        }];
+        let mut pos = Position::startpos();
+        let mv = select_book_move(&mut pos, &entries, BookMode::Weighted).unwrap();
+        assert_eq!(mv.from_sq(), Square::E2);
+        assert_eq!(mv.to_sq(), Square::E4);
     }
 }
