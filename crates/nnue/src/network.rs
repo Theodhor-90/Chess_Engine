@@ -1,70 +1,4 @@
-use chess_types::Color;
-
 use crate::arch::{HALFKP_FEATURES, L1_SIZE, L2_SIZE};
-
-/// Stores the incrementally updatable state for hidden layer 1.
-///
-/// Each perspective (white and black) has its own accumulator vector of `L1_SIZE`
-/// elements. The accumulator is designed to support incremental updates: features
-/// can be added or removed without full recomputation.
-pub struct Accumulator {
-    /// White perspective accumulator values (L1_SIZE elements).
-    pub white: [i16; L1_SIZE],
-    /// Black perspective accumulator values (L1_SIZE elements).
-    pub black: [i16; L1_SIZE],
-}
-
-impl Accumulator {
-    /// Creates a zeroed accumulator.
-    pub fn new() -> Self {
-        Self {
-            white: [0; L1_SIZE],
-            black: [0; L1_SIZE],
-        }
-    }
-
-    /// Sets both perspectives to the bias values (used when refreshing from scratch).
-    pub fn init_from_bias(&mut self, bias: &[i16; L1_SIZE]) {
-        self.white = *bias;
-        self.black = *bias;
-    }
-
-    /// Adds the weight column at `index` to the given perspective's accumulator.
-    ///
-    /// For each `i in 0..L1_SIZE`, adds `weights[index * L1_SIZE + i]` to the
-    /// perspective's accumulator value at position `i`.
-    pub fn add_feature(&mut self, perspective: Color, index: usize, weights: &[i16]) {
-        let vals = match perspective {
-            Color::White => &mut self.white,
-            Color::Black => &mut self.black,
-        };
-        let offset = index * L1_SIZE;
-        for i in 0..L1_SIZE {
-            vals[i] += weights[offset + i];
-        }
-    }
-
-    /// Subtracts the weight column at `index` from the given perspective's accumulator.
-    ///
-    /// For each `i in 0..L1_SIZE`, subtracts `weights[index * L1_SIZE + i]` from the
-    /// perspective's accumulator value at position `i`.
-    pub fn remove_feature(&mut self, perspective: Color, index: usize, weights: &[i16]) {
-        let vals = match perspective {
-            Color::White => &mut self.white,
-            Color::Black => &mut self.black,
-        };
-        let offset = index * L1_SIZE;
-        for i in 0..L1_SIZE {
-            vals[i] -= weights[offset + i];
-        }
-    }
-}
-
-impl Default for Accumulator {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 /// Stores all network weights and biases.
 ///
@@ -110,47 +44,6 @@ impl Network {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::arch::{HALFKP_FEATURES, L1_SIZE, L2_SIZE};
-
-    #[test]
-    fn accumulator_init_from_bias() {
-        let mut acc = Accumulator::new();
-        let mut bias = [0i16; L1_SIZE];
-        for (i, b) in bias.iter_mut().enumerate() {
-            *b = (i as i16) * 3 - 100;
-        }
-        acc.init_from_bias(&bias);
-        assert_eq!(acc.white, bias);
-        assert_eq!(acc.black, bias);
-    }
-
-    #[test]
-    fn accumulator_add_remove_roundtrip() {
-        let mut net = Network::new_zeroed();
-        // Set some non-trivial weights for feature index 42.
-        let feature_idx = 42;
-        for i in 0..L1_SIZE {
-            net.input_weights[feature_idx * L1_SIZE + i] = (i as i16) * 7 - 50;
-        }
-
-        let mut acc = Accumulator::new();
-        acc.init_from_bias(&net.input_bias);
-        let snapshot_white = acc.white;
-        let snapshot_black = acc.black;
-
-        // Add then remove the same feature for white perspective.
-        acc.add_feature(Color::White, feature_idx, &net.input_weights);
-        // Verify it actually changed.
-        assert_ne!(acc.white, snapshot_white);
-        acc.remove_feature(Color::White, feature_idx, &net.input_weights);
-        assert_eq!(acc.white, snapshot_white);
-
-        // Same for black perspective.
-        acc.add_feature(Color::Black, feature_idx, &net.input_weights);
-        assert_ne!(acc.black, snapshot_black);
-        acc.remove_feature(Color::Black, feature_idx, &net.input_weights);
-        assert_eq!(acc.black, snapshot_black);
-    }
 
     #[test]
     fn network_new_zeroed() {

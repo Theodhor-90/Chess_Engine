@@ -1,7 +1,12 @@
+pub mod accumulator;
 pub mod arch;
 pub mod feature;
+pub mod inference;
 pub mod network;
+pub mod simd;
 
+pub use accumulator::Accumulator;
 pub use arch::*;
 pub use feature::{feature_index, HalfKpFeature};
-pub use network::{Accumulator, Network};
+pub use inference::forward;
+pub use network::Network;
