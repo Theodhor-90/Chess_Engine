@@ -12,3 +12,4 @@ simd-neon = []
 [dependencies]
 chess-types = { path = "../types" }
 chess-board = { path = "../board" }
+thiserror = "2"
