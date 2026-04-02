@@ -84,6 +84,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "datagen"
+version = "0.1.0"
+dependencies = [
+ "chess-board",
+ "chess-movegen",
+ "chess-search",
+ "chess-types",
+]
+
+[[package]]
 name = "engine"
 version = "0.1.0"
 dependencies = [
