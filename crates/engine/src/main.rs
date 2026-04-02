@@ -284,6 +284,7 @@ fn main() -> anyhow::Result<()> {
                                 println!("{line}");
                             }
                         }),
+                        None,
                     );
                     if let Some(mv) = result {
                         println!("{}", chess_uci::output::bestmove(mv, None));

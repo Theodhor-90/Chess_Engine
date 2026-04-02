@@ -94,6 +94,24 @@ fn to_fathom_position(pos: &Position) -> fathom_syzygy::Position {
     }
 }
 
+pub struct SyzygyProberAdapter {
+    pub tb: SyzygyTablebase,
+    pub probe_limit: u8,
+}
+
+impl chess_search::TbProber for SyzygyProberAdapter {
+    fn probe_wdl(&mut self, pos: &Position) -> Option<i32> {
+        let wdl = self.tb.probe_wdl(pos, self.probe_limit)?;
+        Some(wdl_to_score(wdl))
+    }
+
+    fn probe_root(&mut self, pos: &Position) -> Option<(i32, i32)> {
+        let wdl = self.tb.probe_wdl(pos, self.probe_limit)?;
+        let dtz = self.tb.probe_dtz(pos, self.probe_limit)?;
+        Some((wdl_to_score(wdl), dtz.0))
+    }
+}
+
 fn convert_wdl(wdl: fathom_syzygy::Wdl) -> Wdl {
     match wdl {
         fathom_syzygy::Wdl::Loss => Wdl::Loss,
