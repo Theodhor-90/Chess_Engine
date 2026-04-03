@@ -1,0 +1,156 @@
+name: Regression Test
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  regression-test:
+    # Pinned to ubuntu-22.04 to ensure qtbase5-dev (Qt5) is available for building CuteChess-CLI.
+    # ubuntu-latest may migrate to Ubuntu 24.04+ where Qt5 packages are deprecated.
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout PR code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Build PR engine
+        run: |
+          cargo build --release -p engine
+          cp target/release/engine ./pr-engine
+
+      - name: Checkout main branch baseline
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: baseline-src
+
+      - name: Build baseline engine
+        run: |
+          cargo build --release -p engine --manifest-path baseline-src/Cargo.toml --target-dir baseline-target
+          cp baseline-target/release/engine ./baseline-engine
+
+      - name: Build CuteChess-CLI from source
+        run: |
+          sudo apt-get update && sudo apt-get install -y qtbase5-dev cmake g++
+          git clone --branch v1.3.1 --depth 1 https://github.com/cutechess/cutechess.git cutechess-src
+          (cd cutechess-src && cmake . && make -j$(nproc) cutechess-cli)
+          cp cutechess-src/cutechess-cli ./cutechess-cli
+
+      - name: Run 100-game head-to-head tournament
+        run: |
+          ./cutechess-cli \
+            -engine name=PR cmd=./pr-engine proto=uci \
+            -engine name=Baseline cmd=./baseline-engine proto=uci \
+            -each tc=1+0.01 \
+            -rounds 50 \
+            -games 2 \
+            -repeat \
+            -openings file=tools/selfplay/openings.txt format=epd order=random \
+            -concurrency 1 \
+            -ratinginterval 0 \
+            -pgnout regression-games.pgn \
+            > tournament-output.txt 2>&1
+
+      - name: Parse results and detect regression
+        run: |
+          set -euo pipefail
+
+          OUTPUT_FILE="tournament-output.txt"
+
+          # Extract the final "Score of" line (last occurrence)
+          SCORE_LINE=$(grep "^Score of" "$OUTPUT_FILE" | tail -1)
+          if [ -z "$SCORE_LINE" ]; then
+            echo "ERROR: No 'Score of' line found in tournament output"
+            cat "$OUTPUT_FILE"
+            exit 1
+          fi
+
+          echo "Tournament result: $SCORE_LINE"
+
+          # Parse W-L-D from "Score of PR vs Baseline: W - L - D  [pct]"
+          # CuteChess-CLI format: first engine's W, first engine's L, D
+          SCORES=$(echo "$SCORE_LINE" | sed 's/.*: *\([0-9]*\) *- *\([0-9]*\) *- *\([0-9]*\).*/\1 \2 \3/')
+          W=$(echo "$SCORES" | awk '{print $1}')
+          L=$(echo "$SCORES" | awk '{print $2}')
+          D=$(echo "$SCORES" | awk '{print $3}')
+          N=$((W + L + D))
+
+          echo "PR engine: +${W} =${D} -${L} (${N} games)"
+
+          if [ "$N" -eq 0 ]; then
+            echo "ERROR: No games completed"
+            exit 1
+          fi
+
+          # Edge case: all losses → definite regression
+          if [ "$W" -eq 0 ] && [ "$D" -eq 0 ]; then
+            echo "REGRESSION DETECTED: PR engine lost all ${N} games"
+            echo "Elo: -inf"
+            exit 1
+          fi
+
+          # Edge case: all wins → no regression
+          if [ "$L" -eq 0 ] && [ "$D" -eq 0 ]; then
+            echo "NO REGRESSION: PR engine won all ${N} games"
+            echo "Elo: +inf"
+            exit 0
+          fi
+
+          # Compute Elo difference and 95% CI using awk (float arithmetic)
+          awk -v w="$W" -v d="$D" -v l="$L" 'BEGIN {
+            n = w + d + l
+            score = (w + d * 0.5) / n
+
+            # Elo difference: -400 * log10(1/score - 1)
+            # awk log() is natural log; log10(x) = log(x)/log(10)
+            # Positive Elo = PR is stronger; negative Elo = PR is weaker
+            elo = -400.0 * log(1.0/score - 1.0) / log(10.0)
+
+            # Standard error of the score proportion
+            se = sqrt(score * (1.0 - score) / n)
+
+            # Lower bound of 95% CI (pessimistic for PR engine)
+            score_lower = score - 1.96 * se
+            if (score_lower <= 0.001) score_lower = 0.001
+            if (score_lower >= 0.999) score_lower = 0.999
+            elo_lower = -400.0 * log(1.0/score_lower - 1.0) / log(10.0)
+
+            # Upper bound of 95% CI (optimistic for PR engine)
+            score_upper = score + 1.96 * se
+            if (score_upper <= 0.001) score_upper = 0.001
+            if (score_upper >= 0.999) score_upper = 0.999
+            elo_upper = -400.0 * log(1.0/score_upper - 1.0) / log(10.0)
+
+            printf "Score: %.1f%%\n", score * 100
+            printf "Elo difference: %+.1f\n", elo
+            printf "95%% CI: [%+.1f, %+.1f] (delta-method approximation)\n", elo_lower, elo_upper
+
+            # Regression check: we flag a regression if we have 95% confidence
+            # that the true Elo is below -30. This requires the UPPER bound
+            # (the most optimistic estimate) of the 95% CI to be below -30.
+            # If even the best-case Elo estimate is worse than -30, the
+            # regression is statistically significant at p<0.05.
+            if (elo_upper < -30.0) {
+              printf "REGRESSION DETECTED: Elo upper bound (%+.1f) < -30\n", elo_upper
+              printf "Even the optimistic 95%% CI bound is below -30 Elo.\n"
+              exit 1
+            } else {
+              printf "NO REGRESSION: Elo upper bound (%+.1f) >= -30\n", elo_upper
+              exit 0
+            }
+          }'

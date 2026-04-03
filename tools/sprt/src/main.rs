@@ -1,117 +1,103 @@
 use std::env;
-use std::fs;
-use std::io::{BufRead, BufReader, BufWriter, Write};
-use std::process::{Child, Command, Stdio};
-use std::sync::mpsc;
-use std::time::Duration;
-
-use chess_board::Position;
-use chess_movegen::generate_legal_moves;
-use chess_types::{Color, Piece, PieceKind, Square};
+use std::process::Command;
 
 struct Args {
     baseline: String,
     candidate: String,
-    openings: String,
+    cutechess: String,
     elo0: f64,
     elo1: f64,
     alpha: f64,
     beta: f64,
-    movetime: u64,
-    maxgames: u32,
-    maxmoves: u32,
-}
-
-#[derive(Debug)]
-enum GameResult {
-    Win,
-    Draw,
-    Loss,
-}
-
-struct EngineHandle {
-    child: Child,
-    writer: BufWriter<std::process::ChildStdin>,
-    rx: mpsc::Receiver<String>,
+    batch_size: u32,
+    max_games: u32,
+    tc: String,
+    openings: Option<String>,
+    concurrency: u32,
 }
 
 fn main() {
     let args = parse_args();
-    let openings = load_openings(&args.openings);
 
     let (lower, upper) = sprt_bounds(args.alpha, args.beta);
-    println!(
-        "SPRT: elo0={:.1} elo1={:.1} alpha={:.2} beta={:.2}",
-        args.elo0, args.elo1, args.alpha, args.beta
-    );
-    println!("Bounds: lower={lower:.3} upper={upper:.3}");
 
-    let mut wins: u32 = 0;
-    let mut draws: u32 = 0;
-    let mut losses: u32 = 0;
-    let mut game_num: u32 = 0;
+    let mut total_wins: u32 = 0;
+    let mut total_draws: u32 = 0;
+    let mut total_losses: u32 = 0;
 
-    while game_num < args.maxgames {
-        let opening_index = (game_num / 2) as usize % openings.len();
-        let opening_fen = &openings[opening_index];
-        let baseline_is_white = game_num.is_multiple_of(2);
+    while total_wins + total_draws + total_losses < args.max_games {
+        let total_games = total_wins + total_draws + total_losses;
+        let remaining = args.max_games - total_games;
+        let batch = if remaining < args.batch_size {
+            remaining
+        } else {
+            args.batch_size
+        };
 
-        let result = play_game(
+        let (w, l, d) = run_batch(
+            &args.cutechess,
             &args.baseline,
             &args.candidate,
-            opening_fen,
-            args.movetime,
-            args.maxmoves,
-            baseline_is_white,
+            batch,
+            &args.tc,
+            args.openings.as_deref(),
+            args.concurrency,
         );
 
-        match result {
-            GameResult::Win => wins += 1,
-            GameResult::Draw => draws += 1,
-            GameResult::Loss => losses += 1,
-        }
+        total_wins += w;
+        total_losses += l;
+        total_draws += d;
 
-        game_num += 1;
-        let total = wins + draws + losses;
+        let total = total_wins + total_draws + total_losses;
+        let llr = log_likelihood_ratio(total_wins, total_draws, total_losses, args.elo0, args.elo1);
         let score_pct = if total > 0 {
-            (wins as f64 + draws as f64 * 0.5) / total as f64 * 100.0
+            (total_wins as f64 + total_draws as f64 * 0.5) / total as f64 * 100.0
         } else {
             0.0
         };
 
-        let llr = log_likelihood_ratio(wins, draws, losses, args.elo0, args.elo1);
-        println!(
-            "Game {}/{}: +{} ={} -{} (score={:.1}%) LLR={:.2} [{:.3}, {:.3}]",
-            game_num, args.maxgames, wins, draws, losses, score_pct, llr, lower, upper
-        );
-
         if llr >= upper {
-            println!("Result: H1 accepted (candidate is stronger)");
             println!(
-                "Final: +{wins} ={draws} -{losses} (score={score_pct:.1}%) LLR={llr:.2} after {game_num} games"
+                "Games: {}/{} | +{} ={} -{} | Score: {:.1}% | LLR: {:.2} [{:.3}, {:.3}] | Status: accept",
+                total, args.max_games, total_wins, total_draws, total_losses, score_pct, llr, lower, upper
             );
-            return;
+            println!(
+                "Result: ACCEPT | LLR: {:.2} (>= {:.3}) | Games: {} | +{} ={} -{} | Score: {:.1}%",
+                llr, upper, total, total_wins, total_draws, total_losses, score_pct
+            );
+            std::process::exit(0);
         }
+
         if llr <= lower {
-            println!("Result: H0 accepted (no significant difference)");
             println!(
-                "Final: +{wins} ={draws} -{losses} (score={score_pct:.1}%) LLR={llr:.2} after {game_num} games"
+                "Games: {}/{} | +{} ={} -{} | Score: {:.1}% | LLR: {:.2} [{:.3}, {:.3}] | Status: reject",
+                total, args.max_games, total_wins, total_draws, total_losses, score_pct, llr, lower, upper
             );
-            return;
+            println!(
+                "Result: REJECT | LLR: {:.2} (<= {:.3}) | Games: {} | +{} ={} -{} | Score: {:.1}%",
+                llr, lower, total, total_wins, total_draws, total_losses, score_pct
+            );
+            std::process::exit(1);
         }
+
+        println!(
+            "Games: {}/{} | +{} ={} -{} | Score: {:.1}% | LLR: {:.2} [{:.3}, {:.3}] | Status: continue",
+            total, args.max_games, total_wins, total_draws, total_losses, score_pct, llr, lower, upper
+        );
     }
 
-    let total = wins + draws + losses;
+    let total = total_wins + total_draws + total_losses;
+    let llr = log_likelihood_ratio(total_wins, total_draws, total_losses, args.elo0, args.elo1);
     let score_pct = if total > 0 {
-        (wins as f64 + draws as f64 * 0.5) / total as f64 * 100.0
+        (total_wins as f64 + total_draws as f64 * 0.5) / total as f64 * 100.0
     } else {
         0.0
     };
-    let llr = log_likelihood_ratio(wins, draws, losses, args.elo0, args.elo1);
-    println!("Result: Inconclusive (max games reached)");
     println!(
-        "Final: +{wins} ={draws} -{losses} (score={score_pct:.1}%) LLR={llr:.2} after {game_num} games"
+        "Result: INCONCLUSIVE | LLR: {:.2} | Games: {} | +{} ={} -{} | Score: {:.1}%",
+        llr, total, total_wins, total_draws, total_losses, score_pct
     );
+    std::process::exit(2);
 }
 
 fn parse_args() -> Args {
@@ -119,14 +105,16 @@ fn parse_args() -> Args {
 
     let mut baseline = None;
     let mut candidate = None;
+    let mut cutechess = None;
+    let mut elo0 = 0.0_f64;
+    let mut elo1 = 5.0_f64;
+    let mut alpha = 0.05_f64;
+    let mut beta = 0.05_f64;
+    let mut batch_size = 100_u32;
+    let mut max_games = 10000_u32;
+    let mut tc = String::from("10+0.1");
     let mut openings = None;
-    let mut elo0 = None;
-    let mut elo1 = None;
-    let mut alpha = None;
-    let mut beta = None;
-    let mut movetime = None;
-    let mut maxgames = 10000u32;
-    let mut maxmoves = 300u32;
+    let mut concurrency = 1_u32;
 
     let mut i = 1;
     while i < args.len() {
@@ -139,37 +127,49 @@ fn parse_args() -> Args {
                 i += 1;
                 candidate = Some(args[i].clone());
             }
+            "--cutechess" => {
+                i += 1;
+                cutechess = Some(args[i].clone());
+            }
+            "--elo0" => {
+                i += 1;
+                elo0 = args[i].parse::<f64>().expect("invalid elo0");
+            }
+            "--elo1" => {
+                i += 1;
+                elo1 = args[i].parse::<f64>().expect("invalid elo1");
+            }
+            "--alpha" => {
+                i += 1;
+                alpha = args[i].parse::<f64>().expect("invalid alpha");
+            }
+            "--beta" => {
+                i += 1;
+                beta = args[i].parse::<f64>().expect("invalid beta");
+            }
+            "--batch-size" => {
+                i += 1;
+                batch_size = args[i].parse::<u32>().expect("invalid batch-size");
+            }
+            "--max-games" => {
+                i += 1;
+                max_games = args[i].parse::<u32>().expect("invalid max-games");
+            }
+            "--tc" => {
+                i += 1;
+                tc = args[i].clone();
+            }
             "--openings" => {
                 i += 1;
                 openings = Some(args[i].clone());
             }
-            "--elo0" => {
+            "--concurrency" => {
                 i += 1;
-                elo0 = Some(args[i].parse::<f64>().expect("invalid elo0"));
+                concurrency = args[i].parse::<u32>().expect("invalid concurrency");
             }
-            "--elo1" => {
-                i += 1;
-                elo1 = Some(args[i].parse::<f64>().expect("invalid elo1"));
-            }
-            "--alpha" => {
-                i += 1;
-                alpha = Some(args[i].parse::<f64>().expect("invalid alpha"));
-            }
-            "--beta" => {
-                i += 1;
-                beta = Some(args[i].parse::<f64>().expect("invalid beta"));
-            }
-            "--movetime" => {
-                i += 1;
-                movetime = Some(args[i].parse::<u64>().expect("invalid movetime"));
-            }
-            "--maxgames" => {
-                i += 1;
-                maxgames = args[i].parse::<u32>().expect("invalid maxgames");
-            }
-            "--maxmoves" => {
-                i += 1;
-                maxmoves = args[i].parse::<u32>().expect("invalid maxmoves");
+            "--help" | "-h" => {
+                print_usage();
+                std::process::exit(0);
             }
             other => {
                 eprintln!("Unknown argument: {other}");
@@ -181,34 +181,17 @@ fn parse_args() -> Args {
     }
 
     let baseline = baseline.unwrap_or_else(|| {
+        eprintln!("Error: --baseline is required");
         print_usage();
         std::process::exit(1);
     });
     let candidate = candidate.unwrap_or_else(|| {
+        eprintln!("Error: --candidate is required");
         print_usage();
         std::process::exit(1);
     });
-    let openings = openings.unwrap_or_else(|| {
-        print_usage();
-        std::process::exit(1);
-    });
-    let elo0 = elo0.unwrap_or_else(|| {
-        print_usage();
-        std::process::exit(1);
-    });
-    let elo1 = elo1.unwrap_or_else(|| {
-        print_usage();
-        std::process::exit(1);
-    });
-    let alpha = alpha.unwrap_or_else(|| {
-        print_usage();
-        std::process::exit(1);
-    });
-    let beta = beta.unwrap_or_else(|| {
-        print_usage();
-        std::process::exit(1);
-    });
-    let movetime = movetime.unwrap_or_else(|| {
+    let cutechess = cutechess.unwrap_or_else(|| {
+        eprintln!("Error: --cutechess is required");
         print_usage();
         std::process::exit(1);
     });
@@ -216,306 +199,112 @@ fn parse_args() -> Args {
     Args {
         baseline,
         candidate,
-        openings,
+        cutechess,
         elo0,
         elo1,
         alpha,
         beta,
-        movetime,
-        maxgames,
-        maxmoves,
+        batch_size,
+        max_games,
+        tc,
+        openings,
+        concurrency,
     }
 }
 
 fn print_usage() {
     eprintln!(
-        "Usage: sprt --baseline <path> --candidate <path> --openings <path> \
-         --elo0 <f64> --elo1 <f64> --alpha <f64> --beta <f64> \
-         --movetime <ms> [--maxgames <N>] [--maxmoves <N>]"
+        "Usage: sprt --baseline <path> --candidate <path> --cutechess <path> \
+         [--elo0 <f64>] [--elo1 <f64>] [--alpha <f64>] [--beta <f64>] \
+         [--tc <string>] [--batch-size <N>] [--max-games <N>] \
+         [--openings <path>] [--concurrency <N>]"
     );
+    eprintln!();
+    eprintln!("Required:");
+    eprintln!("  --baseline <path>     Path to baseline engine binary");
+    eprintln!("  --candidate <path>    Path to candidate engine binary");
+    eprintln!("  --cutechess <path>    Path to CuteChess-CLI binary");
+    eprintln!();
+    eprintln!("Optional:");
+    eprintln!("  --elo0 <f64>          Null hypothesis Elo bound (default: 0.0)");
+    eprintln!("  --elo1 <f64>          Alternative hypothesis Elo bound (default: 5.0)");
+    eprintln!("  --alpha <f64>         Type I error rate (default: 0.05)");
+    eprintln!("  --beta <f64>          Type II error rate (default: 0.05)");
+    eprintln!("  --tc <string>         Time control string (default: 10+0.1)");
+    eprintln!("  --batch-size <N>      Games per batch (default: 100)");
+    eprintln!("  --max-games <N>       Maximum total games (default: 10000)");
+    eprintln!("  --openings <path>     Openings file path");
+    eprintln!("  --concurrency <N>     Concurrent games (default: 1)");
 }
 
-fn load_openings(path: &str) -> Vec<String> {
-    let content = fs::read_to_string(path).unwrap_or_else(|e| {
-        eprintln!("Failed to read {path}: {e}");
+fn run_batch(
+    cutechess: &str,
+    baseline: &str,
+    candidate: &str,
+    games: u32,
+    tc: &str,
+    openings: Option<&str>,
+    concurrency: u32,
+) -> (u32, u32, u32) {
+    let rounds = games.div_ceil(2);
+
+    let mut cmd = Command::new(cutechess);
+    cmd.arg("-engine")
+        .arg(format!("name=Candidate cmd={candidate}"))
+        .arg("-engine")
+        .arg(format!("name=Baseline cmd={baseline}"))
+        .arg("-each")
+        .arg(format!("proto=uci tc={tc}"))
+        .arg("-games")
+        .arg(games.to_string())
+        .arg("-rounds")
+        .arg(rounds.to_string())
+        .arg("-repeat")
+        .arg("-concurrency")
+        .arg(concurrency.to_string())
+        .arg("-ratinginterval")
+        .arg("0");
+
+    if let Some(path) = openings {
+        cmd.arg("-openingfile").arg(path);
+    }
+
+    let output = cmd.output().unwrap_or_else(|e| {
+        eprintln!("Failed to run CuteChess-CLI: {e}");
         std::process::exit(1);
     });
-    let openings: Vec<String> = content
-        .lines()
-        .map(|l| l.trim())
-        .filter(|l| !l.is_empty() && !l.starts_with('#'))
-        .map(|l| l.to_string())
-        .collect();
-    assert!(!openings.is_empty(), "No openings loaded from {path}");
-    openings
-}
 
-fn spawn_engine(path: &str) -> EngineHandle {
-    let mut child = Command::new(path)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap_or_else(|e| panic!("failed to spawn engine '{path}': {e}"));
+    let stdout = String::from_utf8_lossy(&output.stdout);
 
-    let stdin = child.stdin.take().expect("failed to open engine stdin");
-    let stdout = child.stdout.take().expect("failed to open engine stdout");
-    let mut writer = BufWriter::new(stdin);
-
-    let (tx, rx) = mpsc::channel();
-    std::thread::spawn(move || {
-        let mut reader = BufReader::new(stdout);
-        let mut buf = String::new();
-        loop {
-            buf.clear();
-            match reader.read_line(&mut buf) {
-                Ok(0) | Err(_) => break,
-                Ok(_) => {
-                    if tx.send(buf.trim().to_string()).is_err() {
-                        break;
-                    }
-                }
-            }
-        }
-    });
-
-    send_line(&mut writer, "uci");
-    wait_for_line(&rx, "uciok", Duration::from_secs(5));
-    send_line(&mut writer, "isready");
-    wait_for_line(&rx, "readyok", Duration::from_secs(5));
-
-    EngineHandle { child, writer, rx }
-}
-
-fn send_line(writer: &mut impl Write, line: &str) {
-    writeln!(writer, "{line}").expect("failed to write to engine");
-    writer.flush().expect("failed to flush engine stdin");
-}
-
-fn wait_for_line(rx: &mpsc::Receiver<String>, expected: &str, timeout: Duration) {
-    let deadline = std::time::Instant::now() + timeout;
-    loop {
-        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
-        if remaining.is_zero() {
-            panic!("timeout waiting for '{expected}' from engine");
-        }
-        match rx.recv_timeout(remaining) {
-            Ok(line) if line == expected => return,
-            Ok(_) => continue,
-            Err(_) => panic!("engine closed stdout while waiting for '{expected}'"),
-        }
-    }
-}
-
-fn wait_for_bestmove(
-    rx: &mpsc::Receiver<String>,
-    timeout: Duration,
-) -> Result<String, &'static str> {
-    let deadline = std::time::Instant::now() + timeout;
-    loop {
-        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
-        if remaining.is_zero() {
-            return Err("timeout");
-        }
-        match rx.recv_timeout(remaining) {
-            Ok(line) => {
-                if let Some(rest) = line.strip_prefix("bestmove") {
-                    let rest = rest.trim();
-                    let mv = rest.split_whitespace().next().unwrap_or("0000");
-                    return Ok(mv.to_string());
-                }
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) => return Err("timeout"),
-            Err(mpsc::RecvTimeoutError::Disconnected) => return Err("disconnected"),
-        }
-    }
-}
-
-fn validate_move(pos: &mut Position, move_str: &str) -> Option<chess_types::Move> {
-    let legal_moves = generate_legal_moves(pos);
-    for mv in &legal_moves {
-        if format!("{mv}") == move_str {
-            return Some(*mv);
-        }
-    }
-    None
-}
-
-fn find_king_square(pos: &Position, color: Color) -> Square {
-    let king = Piece::new(color, PieceKind::King);
-    let bb = pos.piece_bitboard(king);
-    let sq_idx = bb
-        .lsb()
-        .unwrap_or_else(|| panic!("no king found for {color:?}"));
-    Square::new(sq_idx as u8).unwrap()
-}
-
-fn is_in_check(pos: &Position) -> bool {
-    let side = pos.side_to_move();
-    let king_sq = find_king_square(pos, side);
-    pos.is_square_attacked(king_sq, side.opposite())
-}
-
-fn is_insufficient_material(pos: &Position) -> bool {
-    let white_pieces = pos.occupied_by(Color::White);
-    let black_pieces = pos.occupied_by(Color::Black);
-    let total = white_pieces.pop_count() + black_pieces.pop_count();
-
-    if total == 2 {
-        return true;
-    }
-
-    if total == 3 {
-        for color in [Color::White, Color::Black] {
-            let knights = pos.piece_bitboard(Piece::new(color, PieceKind::Knight));
-            let bishops = pos.piece_bitboard(Piece::new(color, PieceKind::Bishop));
-            if knights.pop_count() == 1 || bishops.pop_count() == 1 {
-                return true;
-            }
+    for line in stdout.lines().rev() {
+        if let Some(result) = parse_score_line(line) {
+            return result;
         }
     }
 
-    if total == 4 {
-        let wb = pos.piece_bitboard(Piece::new(Color::White, PieceKind::Bishop));
-        let bb = pos.piece_bitboard(Piece::new(Color::Black, PieceKind::Bishop));
-        if wb.pop_count() == 1 && bb.pop_count() == 1 {
-            let w_sq = Square::new(wb.lsb().unwrap() as u8).unwrap();
-            let b_sq = Square::new(bb.lsb().unwrap() as u8).unwrap();
-            let w_dark = (w_sq.file() as u8 + w_sq.rank() as u8) % 2;
-            let b_dark = (b_sq.file() as u8 + b_sq.rank() as u8) % 2;
-            if w_dark == b_dark {
-                return true;
-            }
-        }
-    }
-
-    false
+    eprintln!("No score line found in CuteChess-CLI output");
+    eprintln!("stdout: {stdout}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    eprintln!("stderr: {stderr}");
+    std::process::exit(1);
 }
 
-fn count_repetitions(hash_history: &[u64], current_hash: u64) -> u32 {
-    let mut count = 0;
-    for &h in hash_history {
-        if h == current_hash {
-            count += 1;
-        }
+fn parse_score_line(line: &str) -> Option<(u32, u32, u32)> {
+    let colon_idx = line.find(':')?;
+    let after_colon = line[colon_idx + 1..].trim();
+    let bracket_idx = after_colon.find('[')?;
+    let scores_part = after_colon[..bracket_idx].trim();
+
+    let parts: Vec<&str> = scores_part.split('-').collect();
+    if parts.len() != 3 {
+        return None;
     }
-    count
-}
 
-#[allow(clippy::too_many_arguments)]
-fn play_game(
-    baseline_path: &str,
-    candidate_path: &str,
-    opening_fen: &str,
-    movetime: u64,
-    max_moves: u32,
-    baseline_is_white: bool,
-) -> GameResult {
-    let mut pos = Position::from_fen(opening_fen).unwrap_or_else(|e| {
-        panic!("invalid opening FEN '{opening_fen}': {e:?}");
-    });
+    let w: u32 = parts[0].trim().parse().ok()?;
+    let l: u32 = parts[1].trim().parse().ok()?;
+    let d: u32 = parts[2].trim().parse().ok()?;
 
-    let mut hash_history: Vec<u64> = vec![pos.hash()];
-    let mut move_history: Vec<String> = Vec::new();
-    let mut ply_count = 0u32;
-
-    let (white_path, black_path) = if baseline_is_white {
-        (baseline_path, candidate_path)
-    } else {
-        (candidate_path, baseline_path)
-    };
-
-    let mut white_engine = spawn_engine(white_path);
-    let mut black_engine = spawn_engine(black_path);
-
-    let timeout = Duration::from_millis(movetime * 10);
-
-    let game_result = loop {
-        if ply_count >= max_moves {
-            break GameResult::Draw;
-        }
-
-        let side = pos.side_to_move();
-        let engine = if side == Color::White {
-            &mut white_engine
-        } else {
-            &mut black_engine
-        };
-
-        send_line(&mut engine.writer, "isready");
-        wait_for_line(&engine.rx, "readyok", Duration::from_secs(5));
-
-        let pos_cmd = if move_history.is_empty() {
-            format!("position fen {opening_fen}")
-        } else {
-            format!(
-                "position fen {opening_fen} moves {}",
-                move_history.join(" ")
-            )
-        };
-        send_line(&mut engine.writer, &pos_cmd);
-
-        let go_cmd = format!("go movetime {movetime}");
-        send_line(&mut engine.writer, &go_cmd);
-
-        let bestmove_str = match wait_for_bestmove(&engine.rx, timeout) {
-            Ok(s) => s,
-            Err(_) => break GameResult::Draw,
-        };
-
-        if bestmove_str == "0000" || bestmove_str == "(none)" {
-            break GameResult::Draw;
-        }
-
-        let mv = match validate_move(&mut pos, &bestmove_str) {
-            Some(mv) => mv,
-            None => break GameResult::Draw,
-        };
-
-        let _undo = pos.make_move(mv);
-        move_history.push(bestmove_str);
-        ply_count += 1;
-        hash_history.push(pos.hash());
-
-        let legal_moves = generate_legal_moves(&mut pos);
-        if legal_moves.is_empty() {
-            if is_in_check(&pos) {
-                let winner_is_white = pos.side_to_move() == Color::Black;
-                let candidate_wins = if baseline_is_white {
-                    !winner_is_white
-                } else {
-                    winner_is_white
-                };
-                break if candidate_wins {
-                    GameResult::Win
-                } else {
-                    GameResult::Loss
-                };
-            } else {
-                break GameResult::Draw;
-            }
-        }
-
-        if pos.halfmove_clock() >= 100 {
-            break GameResult::Draw;
-        }
-
-        if count_repetitions(&hash_history, pos.hash()) >= 3 {
-            break GameResult::Draw;
-        }
-
-        if is_insufficient_material(&pos) {
-            break GameResult::Draw;
-        }
-    };
-
-    send_line(&mut white_engine.writer, "quit");
-    send_line(&mut black_engine.writer, "quit");
-
-    let _ = white_engine.child.wait();
-    let _ = black_engine.child.wait();
-
-    game_result
+    Some((w, l, d))
 }
 
 fn elo_to_score(elo: f64) -> f64 {
@@ -553,4 +342,66 @@ fn sprt_bounds(alpha: f64, beta: f64) -> (f64, f64) {
     let lower = (beta / (1.0 - alpha)).ln();
     let upper = ((1.0 - beta) / alpha).ln();
     (lower, upper)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sprt_bounds() {
+        let (lower, upper) = sprt_bounds(0.05, 0.05);
+        assert!((lower - (-2.944)).abs() < 0.01, "lower={lower}");
+        assert!((upper - 2.944).abs() < 0.01, "upper={upper}");
+    }
+
+    #[test]
+    fn test_elo_to_score_zero() {
+        let s = elo_to_score(0.0);
+        assert!((s - 0.5).abs() < 1e-10, "s={s}");
+    }
+
+    #[test]
+    fn test_elo_to_score_positive() {
+        let s = elo_to_score(5.0);
+        assert!(s > 0.5, "s={s}");
+        assert!((s - 0.5072).abs() < 0.001, "s={s}");
+    }
+
+    #[test]
+    fn test_llr_equal_score() {
+        let llr = log_likelihood_ratio(100, 200, 100, 0.0, 5.0);
+        assert!(llr.abs() < 0.5, "llr={llr}");
+    }
+
+    #[test]
+    fn test_llr_positive() {
+        let llr = log_likelihood_ratio(150, 200, 100, 0.0, 5.0);
+        assert!(llr > 0.0, "llr={llr}");
+    }
+
+    #[test]
+    fn test_llr_negative() {
+        let llr = log_likelihood_ratio(100, 200, 150, 0.0, 5.0);
+        assert!(llr < 0.0, "llr={llr}");
+    }
+
+    #[test]
+    fn test_llr_zero_games() {
+        let llr = log_likelihood_ratio(0, 0, 0, 0.0, 5.0);
+        assert!((llr - 0.0).abs() < 1e-10, "llr={llr}");
+    }
+
+    #[test]
+    fn test_parse_score_line_valid() {
+        let line = "Score of Candidate vs Baseline: 120 - 100 - 280 [0.520]";
+        let result = parse_score_line(line);
+        assert_eq!(result, Some((120, 100, 280)));
+    }
+
+    #[test]
+    fn test_parse_score_line_invalid() {
+        let result = parse_score_line("not a score line");
+        assert_eq!(result, None);
+    }
 }
