@@ -1,0 +1,5 @@
+- **`.github/workflows/release.yml`** (modified)
+  - Replaced `on: workflow_dispatch:` trigger with `on: push: tags: ['v*']`
+  - Added "Generate changelog" step in `package` job after Checkout: fetches full git history, determines previous tag via `git describe`, generates `CHANGELOG_BODY.md` from commit messages between tags (or all commits for first release)
+  - Added `body_path: CHANGELOG_BODY.md` to the `softprops/action-gh-release@v2` step
+- **`Cargo.toml`** — no change needed; `version = "0.1.0"` already SemVer-compliant (per plan Design Deviation #1)

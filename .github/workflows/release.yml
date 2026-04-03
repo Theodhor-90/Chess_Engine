@@ -1,0 +1,180 @@
+name: Release Build
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            simd: simd-sse2
+            os: ubuntu-latest
+            use_cross: false
+          - target: x86_64-unknown-linux-gnu
+            simd: simd-avx2
+            os: ubuntu-latest
+            use_cross: false
+          - target: x86_64-apple-darwin
+            simd: simd-sse2
+            os: macos-13
+            use_cross: false
+          - target: x86_64-apple-darwin
+            simd: simd-avx2
+            os: macos-13
+            use_cross: false
+          - target: x86_64-pc-windows-msvc
+            simd: simd-sse2
+            os: windows-latest
+            use_cross: false
+          - target: x86_64-pc-windows-msvc
+            simd: simd-avx2
+            os: windows-latest
+            use_cross: false
+          - target: aarch64-unknown-linux-gnu
+            simd: simd-neon
+            os: ubuntu-latest
+            use_cross: true
+          - target: aarch64-apple-darwin
+            simd: simd-neon
+            os: macos-latest
+            use_cross: false
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Cargo artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Install cross
+        if: matrix.use_cross == true
+        run: cargo install cross --locked
+
+      - name: Preflight — cargo fmt
+        if: matrix.use_cross == false
+        run: cargo fmt --check
+
+      - name: Preflight — cargo clippy
+        if: matrix.use_cross == false
+        run: cargo clippy -- -D warnings
+
+      - name: Preflight — cargo test
+        if: matrix.use_cross == false
+        run: cargo test
+
+      - name: Build release binary
+        if: matrix.use_cross == false
+        run: cargo build --release -p engine --target ${{ matrix.target }} --features ${{ matrix.simd }}
+
+      - name: Build release binary (cross)
+        if: matrix.use_cross == true
+        run: cross build --release -p engine --target ${{ matrix.target }} --features ${{ matrix.simd }}
+
+      - name: Upload artifact (Unix)
+        if: matrix.target != 'x86_64-pc-windows-msvc'
+        uses: actions/upload-artifact@v4
+        with:
+          name: engine-${{ matrix.target }}-${{ matrix.simd }}
+          path: target/${{ matrix.target }}/release/engine
+
+      - name: Upload artifact (Windows)
+        if: matrix.target == 'x86_64-pc-windows-msvc'
+        uses: actions/upload-artifact@v4
+        with:
+          name: engine-${{ matrix.target }}-${{ matrix.simd }}
+          path: target/${{ matrix.target }}/release/engine.exe
+
+  package:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Generate changelog
+        run: |
+          git fetch --prune --unshallow
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          CURRENT_TAG=${GITHUB_REF_NAME}
+
+          if [ -z "$PREV_TAG" ]; then
+            echo "## ${CURRENT_TAG}" > CHANGELOG_BODY.md
+            echo "" >> CHANGELOG_BODY.md
+            echo "Initial release." >> CHANGELOG_BODY.md
+            echo "" >> CHANGELOG_BODY.md
+            git log --pretty=format:"- %s" >> CHANGELOG_BODY.md
+          else
+            echo "## ${CURRENT_TAG}" > CHANGELOG_BODY.md
+            echo "" >> CHANGELOG_BODY.md
+            echo "### Changes since ${PREV_TAG}" >> CHANGELOG_BODY.md
+            echo "" >> CHANGELOG_BODY.md
+            git log ${PREV_TAG}..HEAD --pretty=format:"- %s" >> CHANGELOG_BODY.md
+          fi
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Package archives
+        run: |
+          mkdir -p dist/
+          for dir in artifacts/engine-*; do
+            artifact_name=$(basename "$dir")
+            # Extract target and simd from artifact name: engine-<target>-simd-<level>
+            # e.g., engine-x86_64-unknown-linux-gnu-simd-avx2
+            target=$(echo "$artifact_name" | sed 's/^engine-//' | sed 's/-simd-[a-z0-9]*$//')
+            simd_level=$(echo "$artifact_name" | sed 's/.*simd-//')
+            archive_base="chess-engine-${target}-${simd_level}"
+
+            if echo "$target" | grep -q "windows"; then
+              # Windows: create .zip with engine.exe and nn.nnue
+              cp "$dir/engine.exe" .
+              cp nets/nn.nnue .
+              zip "dist/${archive_base}.zip" engine.exe nn.nnue
+              rm engine.exe nn.nnue
+            else
+              # Unix: create .tar.gz with engine and nn.nnue
+              cp "$dir/engine" .
+              chmod +x engine
+              cp nets/nn.nnue .
+              tar czf "dist/${archive_base}.tar.gz" engine nn.nnue
+              rm engine nn.nnue
+            fi
+          done
+          echo "Archives created:"
+          ls -la dist/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          body_path: CHANGELOG_BODY.md
+          draft: false
+          prerelease: false
+          files: dist/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

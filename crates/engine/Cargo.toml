@@ -11,6 +11,12 @@ path = "src/lib.rs"
 name = "engine"
 path = "src/main.rs"
 
+[features]
+default = []
+simd-sse2 = ["chess-nnue/simd-sse2"]
+simd-avx2 = ["chess-nnue/simd-avx2"]
+simd-neon = ["chess-nnue/simd-neon"]
+
 [dependencies]
 chess-uci = { path = "../uci" }
 chess-search = { path = "../search" }
