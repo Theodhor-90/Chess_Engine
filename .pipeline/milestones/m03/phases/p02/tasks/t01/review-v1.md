@@ -1,0 +1,1 @@
+The full workspace test suite completed successfully — all 211 tests across all crates passed (types: 55, board: 66, movegen: 71, eval: 13, search: 6). The review is complete and the implementation has been approved.
