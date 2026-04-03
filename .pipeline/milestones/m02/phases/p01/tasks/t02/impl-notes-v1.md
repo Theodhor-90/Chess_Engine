@@ -1,0 +1,2 @@
+- **`crates/movegen/src/knights.rs`** (created): `const KNIGHT_ATTACKS: [Bitboard; 64]` table via `const fn init_knight_attacks()`, `pub fn generate_knight_moves(pos, moves)` producing pseudo-legal knight moves with `CAPTURE`/`QUIET` flags, 7 unit tests (corner/edge/center attack table, center moves, friendly exclusion, captures, black knight)
+- **`crates/movegen/src/lib.rs`** (modified): added `pub mod knights;` and `pub use knights::generate_knight_moves;`

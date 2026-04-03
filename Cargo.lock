@@ -11,6 +11,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "chess-movegen"
+version = "0.1.0"
+dependencies = [
+ "chess-board",
+ "chess-types",
+]
+
+[[package]]
 name = "chess-types"
 version = "0.1.0"
 dependencies = [

@@ -1,0 +1,2 @@
+- **`crates/movegen/src/king.rs`** (created): `KING_ATTACKS` compile-time `[Bitboard; 64]` table via `const fn init_king_attacks()`, `generate_king_moves(pos, moves)` with friendly-piece exclusion, opponent-attack filtering, correct QUIET/CAPTURE flags, and 8 colocated unit tests
+- **`crates/movegen/src/lib.rs`** (modified): Added `pub mod king;` and `pub use king::generate_king_moves;`

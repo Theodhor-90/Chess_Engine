@@ -6,7 +6,7 @@ impl Bitboard {
     pub const EMPTY: Bitboard = Bitboard(0);
     pub const FULL: Bitboard = Bitboard(u64::MAX);
 
-    pub fn new(val: u64) -> Self {
+    pub const fn new(val: u64) -> Self {
         Bitboard(val)
     }
 
