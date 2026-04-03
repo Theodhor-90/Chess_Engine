@@ -1,7 +1,9 @@
 name: Release Build
 
 on:
-  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
 
 jobs:
   build:
@@ -111,6 +113,26 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Generate changelog
+        run: |
+          git fetch --prune --unshallow
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          CURRENT_TAG=${GITHUB_REF_NAME}
+
+          if [ -z "$PREV_TAG" ]; then
+            echo "## ${CURRENT_TAG}" > CHANGELOG_BODY.md
+            echo "" >> CHANGELOG_BODY.md
+            echo "Initial release." >> CHANGELOG_BODY.md
+            echo "" >> CHANGELOG_BODY.md
+            git log --pretty=format:"- %s" >> CHANGELOG_BODY.md
+          else
+            echo "## ${CURRENT_TAG}" > CHANGELOG_BODY.md
+            echo "" >> CHANGELOG_BODY.md
+            echo "### Changes since ${PREV_TAG}" >> CHANGELOG_BODY.md
+            echo "" >> CHANGELOG_BODY.md
+            git log ${PREV_TAG}..HEAD --pretty=format:"- %s" >> CHANGELOG_BODY.md
+          fi
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -150,6 +172,7 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           name: ${{ github.ref_name }}
+          body_path: CHANGELOG_BODY.md
           draft: false
           prerelease: false
           files: dist/*
