@@ -7,7 +7,7 @@ pub mod loader;
 pub mod network;
 pub mod simd;
 
-pub use accumulator::Accumulator;
+pub use accumulator::{Accumulator, AccumulatorStack, AccumulatorState};
 pub use arch::*;
 pub use feature::{feature_index, HalfKpFeature};
 pub use inference::forward;

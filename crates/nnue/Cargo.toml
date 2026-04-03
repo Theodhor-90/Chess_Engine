@@ -13,3 +13,6 @@ simd-neon = []
 chess-types = { path = "../types" }
 chess-board = { path = "../board" }
 thiserror = "2"
+
+[dev-dependencies]
+chess-movegen = { path = "../movegen" }

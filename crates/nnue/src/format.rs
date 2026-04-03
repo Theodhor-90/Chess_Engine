@@ -30,7 +30,7 @@
 //! (HalfKP 40960→256→32→1) differs from Stockfish's HalfKAv2 architecture, and
 //! their nested section header scheme is tightly coupled to their specific layout.
 
-use crate::arch::{HALFKP_FEATURES, L1_SIZE, L2_SIZE, OUTPUT_SIZE};
+use crate::arch::NetworkDims;
 use std::io::{Read, Write};
 
 pub const MAGIC: [u8; 4] = *b"NNUE";
@@ -46,19 +46,23 @@ pub struct Header {
     pub output_size: u32,
 }
 
-pub fn architecture_hash() -> u32 {
-    let dims = [
-        HALFKP_FEATURES as u32,
-        L1_SIZE as u32,
-        L2_SIZE as u32,
-        OUTPUT_SIZE as u32,
+pub fn architecture_hash_for(dims: &NetworkDims) -> u32 {
+    let values = [
+        dims.halfkp_features as u32,
+        dims.l1_size as u32,
+        dims.l2_size as u32,
+        dims.output_size as u32,
     ];
     let mut hash: u32 = 0;
-    for d in dims {
+    for d in values {
         hash ^= d;
         hash = hash.rotate_left(7);
     }
     hash
+}
+
+pub fn architecture_hash() -> u32 {
+    architecture_hash_for(&NetworkDims::default_full())
 }
 
 pub fn write_header(writer: &mut impl Write, header: &Header) -> std::io::Result<()> {
@@ -107,4 +111,51 @@ pub fn read_header(reader: &mut impl Read) -> std::io::Result<([u8; 4], Header)>
             output_size,
         },
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    #[test]
+    fn architecture_hash_uniqueness() {
+        let candidates = [
+            // Control (full): 40960→256→32→1
+            NetworkDims {
+                halfkp_features: 40960,
+                l1_size: 256,
+                l2_size: 32,
+                output_size: 1,
+            },
+            // Half-input: 40960→128→32→1
+            NetworkDims {
+                halfkp_features: 40960,
+                l1_size: 128,
+                l2_size: 32,
+                output_size: 1,
+            },
+            // Reduced-hidden: 40960→256→16→1
+            NetworkDims {
+                halfkp_features: 40960,
+                l1_size: 256,
+                l2_size: 16,
+                output_size: 1,
+            },
+            // Combined: 40960→128→16→1
+            NetworkDims {
+                halfkp_features: 40960,
+                l1_size: 128,
+                l2_size: 16,
+                output_size: 1,
+            },
+        ];
+
+        let hashes: HashSet<u32> = candidates.iter().map(|d| architecture_hash_for(d)).collect();
+        assert_eq!(
+            hashes.len(),
+            candidates.len(),
+            "all four candidate architectures must produce distinct hashes"
+        );
+    }
 }

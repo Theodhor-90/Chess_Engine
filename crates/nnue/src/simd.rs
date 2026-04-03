@@ -89,7 +89,6 @@ pub(crate) fn dot_i8_i32(a: &[i8], b: &[i8]) -> i32 {
 }
 
 /// Element-wise add: `acc[i] += weights[i]`.
-#[allow(dead_code)]
 pub(crate) fn vec_add_i16(acc: &mut [i16], weights: &[i16]) {
     debug_assert_eq!(acc.len(), weights.len());
 
@@ -134,7 +133,6 @@ pub(crate) fn vec_add_i16(acc: &mut [i16], weights: &[i16]) {
 }
 
 /// Element-wise subtract: `acc[i] -= weights[i]`.
-#[allow(dead_code)]
 pub(crate) fn vec_sub_i16(acc: &mut [i16], weights: &[i16]) {
     debug_assert_eq!(acc.len(), weights.len());
 
@@ -195,14 +193,12 @@ fn dot_scalar(a: &[i8], b: &[i8]) -> i32 {
         .sum()
 }
 
-#[allow(dead_code)]
 fn vec_add_scalar(acc: &mut [i16], weights: &[i16]) {
     for (a, &w) in acc.iter_mut().zip(weights.iter()) {
         *a += w;
     }
 }
 
-#[allow(dead_code)]
 fn vec_sub_scalar(acc: &mut [i16], weights: &[i16]) {
     for (a, &w) in acc.iter_mut().zip(weights.iter()) {
         *a -= w;
