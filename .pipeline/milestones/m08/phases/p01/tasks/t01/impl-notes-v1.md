@@ -1,0 +1,1 @@
+Already retrieved — all 6 existing perft tests passed. The task is fully complete with all verification commands green.

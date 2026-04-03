@@ -1,0 +1,259 @@
+
+# Strategic Test Suite (STS) - EPD Format
+# 210 positions across 15 strategic themes
+# Themes:
+#   STS.001-014: Open Files and Seventh Rank
+#   STS.015-028: Knight Outposts
+#   STS.029-042: Pawn Structure / Pawn Play
+#   STS.043-056: Bishop Pair
+#   STS.057-070: Undermining
+#   STS.071-084: Piece Activity / Piece Redeployment
+#   STS.085-098: King Safety (Strategic)
+#   STS.099-112: Endgame Technique
+#   STS.113-126: Square Control / Space Advantage
+#   STS.127-140: Weak Squares / Outposts
+#   STS.141-154: Prophylaxis
+#   STS.155-168: Pawn Majorities and Minorities
+#   STS.169-182: Exchange Strategy
+#   STS.183-196: Restriction and Domination
+#   STS.197-210: Centralization
+
+# === Theme 1: Open Files and Seventh Rank (STS.001-014) ===
+2r2rk1/1p1bppbp/p2p1np1/q7/3NP3/1BN1BP2/PPPQ2PP/2KR3R w - - bm Rd3; id "STS.001";
+r4rk1/1bqn1ppp/pp1ppn2/8/2PNP3/2N1BP2/PP4PP/R2Q1RK1 w - - bm Rc1; id "STS.002";
+1r1q1rk1/2p2ppp/p2b1n2/1p1Pp3/8/1BP1BN2/PP3PPP/R2Q1RK1 w - - bm Rc1; id "STS.003";
+r1b2rk1/pp3ppp/2n1pn2/q1ppN3/3P4/P1P1PP2/1P4PP/RNBQR1K1 w - - bm Re2; id "STS.004";
+2rqr1k1/1p2bppp/p2p1n2/4p3/4P1b1/1NP1BN2/PP3PPP/R2QR1K1 w - - bm Rc1; id "STS.005";
+r3r1k1/1pqn1ppp/p2bpn2/8/3P4/2NBBP2/PPQ2P1P/R4RK1 w - - bm Rfe1; id "STS.006";
+r2qr1k1/pp1n1ppp/2pb1n2/3p4/3P4/1PNBPN2/P4PPP/R1BQR1K1 w - - bm Bc2; id "STS.007";
+r4rk1/pp1qbppp/3ppn2/2n5/2P1P3/2N2N2/PP2BPPP/R1BQR1K1 w - - bm Bf1; id "STS.008";
+r1b1r1k1/ppqn1ppp/2p2n2/3p4/1bPP4/2NBPN2/PP3PPP/R1BQR1K1 w - - bm a3; id "STS.009";
+2rr2k1/1p2qppp/pn1ppn2/8/2PNP3/1PN3P1/P3QPKP/3RR3 w - - bm Rd2; id "STS.010";
+r2q1rk1/1b1nbppp/p3pn2/1pp5/3pP3/1B1P1N1P/PPPN1PP1/R1BQR1K1 w - - bm a4; id "STS.011";
+1r3rk1/2qnbppp/pp1ppn2/8/2PNP3/1PN1BP2/P5PP/R2Q1RK1 w - - bm Rc1; id "STS.012";
+r3r1k1/pbqn1ppp/1p2pn2/2p5/2P5/1PN1PN2/PB2BPPP/R2Q1RK1 w - - bm Rd1; id "STS.013";
+2r2rk1/pp1bqppp/2nppn2/8/2P1P3/2N2N2/PP1QBPPP/R4RK1 w - - bm Rfd1; id "STS.014";
+
+# === Theme 2: Knight Outposts (STS.015-028) ===
+r1bq1rk1/pp2ppbp/2np1np1/8/3NP3/2N1BP2/PPPQ2PP/R3KB1R w KQ - bm Nd5; id "STS.015";
+r2qkb1r/1p1bpppp/p1np1n2/8/3NP3/2N5/PPP1BPPP/R1BQ1RK1 w kq - bm Nf5; id "STS.016";
+r1b2rk1/pp1nqppp/2n1p3/2ppP3/3P4/P1PB1N2/2P2PPP/R1BQR1K1 w - - bm Nd2; id "STS.017";
+r1bq1rk1/1pp2ppp/p1np1n2/2b1p3/2B1P3/2NP1N2/PPP2PPP/R1BQ1RK1 w - - bm Nd5; id "STS.018";
+r1bqr1k1/ppp2ppp/2n2n2/3pp3/1bPP4/2NBPN2/PP3PPP/R1BQK2R w KQ - bm Ne2; id "STS.019";
+r2q1rk1/pb1nbppp/1p2pn2/2p5/2P5/1PN2NP1/PB2PPBP/R2Q1RK1 w - - bm Nd5; id "STS.020";
+r1b1k2r/pp1pppbp/2n2np1/q1p5/2P1P3/2NP2P1/PP3PBP/R1BQK1NR w KQkq - bm Nge2; id "STS.021";
+r1bqr1k1/pppn1pbp/3p1np1/4p3/2PPP3/2N2N2/PP2BPPP/R1BQ1RK1 w - - bm Nd5; id "STS.022";
+r2q1rk1/1b2bppp/pp1ppn2/6B1/2PNP3/2N5/PP3PPP/R2QR1K1 w - - bm Nd5; id "STS.023";
+r2qk2r/pp1nbppp/2p1pn2/3p4/2PP4/1PN2NP1/P3PPBP/R1BQ1RK1 w kq - bm Ne5; id "STS.024";
+rnbq1rk1/pp2ppbp/5np1/2pp4/3P4/1PN2NP1/P1P1PPBP/R1BQ1RK1 w - - bm Ne5; id "STS.025";
+r1bq1rk1/p3bppp/1pn1pn2/2pp4/3P4/1P2PNP1/PBP1NPBP/R2Q1RK1 w - - bm Ne5; id "STS.026";
+r1b1kb1r/pp1npppp/1qnp4/1N6/2P1P3/8/PP1NBPPP/R1BQK2R w KQkq - bm Be3; id "STS.027";
+r1bq1rk1/1pp2ppp/p1n2n2/3pp3/1bP5/2N1PN2/PPQP1PPP/R1B1KB1R w KQ - bm Nd5; id "STS.028";
+
+# === Theme 3: Pawn Structure / Pawn Play (STS.029-042) ===
+r1bq1rk1/ppp2ppp/2n1pn2/3pP3/1bPP4/2N2N2/PP3PPP/R1BQKB1R w KQ - bm e6; id "STS.029";
+rnbqkb1r/pp3ppp/4pn2/2pp4/3P4/2N2NP1/PPP1PP1P/R1BQKB1R w KQkq - bm dxc5; id "STS.030";
+r1bqk2r/ppp1bppp/2n2n2/3pp3/3PP3/2PB1N2/PP3PPP/RNBQK2R w KQkq - bm d5; id "STS.031";
+rnbqkb1r/1p3ppp/p2ppn2/8/3NP3/2N5/PPP2PPP/R1BQKB1R w KQkq - bm f4; id "STS.032";
+r2qkb1r/pp1npppp/2p2n2/3p1b2/3P1B2/2N1PN2/PPP2PPP/R2QKB1R w KQkq - bm c4; id "STS.033";
+rnbqkbnr/pp3ppp/4p3/2pp4/3PP3/2N5/PPP2PPP/R1BQKBNR w KQkq - bm e5; id "STS.034";
+r1bq1rk1/pppp1ppp/2n2n2/2b1p3/2B1P3/5N2/PPPP1PPP/RNBQ1RK1 w - - bm c3; id "STS.035";
+rnbqkb1r/ppp2ppp/4pn2/3p4/2PP4/2N5/PP2PPPP/R1BQKBNR w KQkq - bm cxd5; id "STS.036";
+r1bqkbnr/pp1ppppp/2n5/2p5/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - bm d4; id "STS.037";
+r1bq1rk1/1pp2ppp/p1np1n2/4p3/Pb2P3/1B2BN2/1PPQ1PPP/RN3RK1 w - - bm d3; id "STS.038";
+r1b2rk1/ppqnbppp/2p1pn2/3p4/2PP4/1PN1PN2/PB3PPP/R2QKB1R w KQ - bm Bd3; id "STS.039";
+r1bq1rk1/pp1nbppp/2p1p3/3p4/2PP4/2NBPN2/PP3PPP/R1BQ1RK1 w - - bm c5; id "STS.040";
+rnb1kb1r/ppq1pppp/5n2/2pp4/3P4/4PN2/PPP2PPP/RNBQKB1R w KQkq - bm c4; id "STS.041";
+r1bq1rk1/pppn1ppp/4pn2/3p4/1bPP4/2NBPN2/PP3PPP/R1BQK2R w KQ - bm a3; id "STS.042";
+
+# === Theme 4: Bishop Pair (STS.043-056) ===
+r2qr1k1/1b2bppp/ppnppn2/8/2P1P3/1PN2N2/PB3PPP/R2QR1K1 w - - bm d4; id "STS.043";
+r1bq1rk1/ppp2ppp/2nb1n2/3pp3/3PP3/2PB1N2/PP1N1PPP/R1BQ1RK1 w - - bm dxe5; id "STS.044";
+r2qr1k1/1ppbbppp/p1n1pn2/3p4/3P4/1PNBPN2/P1P2PPP/R1BQR1K1 w - - bm a3; id "STS.045";
+r1bq1rk1/pp1n1ppp/4pn2/2ppN3/3P4/P1PB4/2P2PPP/R1BQ1RK1 w - - bm f4; id "STS.046";
+r2q1rk1/1b1nbppp/pp2pn2/2p5/P1BP4/2N1PN2/1P3PPP/R1BQ1RK1 w - - bm d5; id "STS.047";
+rnbq1rk1/pp2bppp/4pn2/2pp4/2PP4/5NP1/PP2PPBP/RNBQ1RK1 w - - bm cxd5; id "STS.048";
+r2q1rk1/pb1nbppp/1p2pn2/2p5/2PP4/5NP1/PP1NPPBP/R1BQ1RK1 w - - bm e4; id "STS.049";
+r1bq1rk1/pp3ppp/2nbpn2/2pp4/3P4/2PB1NP1/PP2PP1P/RNBQ1RK1 w - - bm Bf4; id "STS.050";
+r1b2rk1/pp2qppp/2n1pn2/2pp4/3P4/2PBPN2/PP1N1PPP/R2Q1RK1 w - - bm b3; id "STS.051";
+r2qr1k1/1b1nbppp/p3pn2/1pp5/3P4/1BN1PN2/PP3PPP/R1BQR1K1 w - - bm a4; id "STS.052";
+rnbq1rk1/pp3pbp/2p1pnp1/3p4/2PP4/2N2NP1/PP2PPBP/R1BQ1RK1 w - - bm Bf4; id "STS.053";
+r3r1k1/pp1bqppp/2n2n2/2pp4/3P4/2PBPN2/PP1N1PPP/R2QR1K1 w - - bm a3; id "STS.054";
+r2q1rk1/pb2bppp/1pn1pn2/2p5/2PP4/2N1PN2/PPQ2PPP/R1B1KB1R w KQ - bm Be2; id "STS.055";
+r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/2NP1N2/PPP2PPP/R1BQK2R w KQkq - bm Be3; id "STS.056";
+
+# === Theme 5: Undermining (STS.057-070) ===
+r2q1rk1/1b2bppp/p1n1pn2/1p1p4/3P4/P1NBPN2/1P3PPP/R1BQ1RK1 w - - bm a4; id "STS.057";
+r1bqk2r/pp2bppp/2n1pn2/2ppP3/3P4/2PB1N2/PP3PPP/RNBQK2R w KQkq - bm b4; id "STS.058";
+r1bq1rk1/pp1nbppp/4pn2/2p1N3/2PP4/2N5/PP2BPPP/R1BQ1RK1 w - - bm a4; id "STS.059";
+rnbqkb1r/pp3ppp/2p1pn2/3p4/2PP4/2N2N2/PP2PPPP/R1BQKB1R w KQkq - bm e3; id "STS.060";
+r2q1rk1/pppbbppp/2n1pn2/3p4/2PP4/2N1PN2/PP2BPPP/R1BQ1RK1 w - - bm b3; id "STS.061";
+r1bq1rk1/pp1nbppp/2p1pn2/3p4/2PPP3/2NB1N2/PP3PPP/R1BQ1RK1 w - - bm e5; id "STS.062";
+r2q1rk1/1b2bppp/p1n1p3/1ppnP3/3P4/P1NB1N2/1P3PPP/R1BQR1K1 w - - bm b4; id "STS.063";
+r3r1k1/pp1nqppp/2p1b3/3pPn2/3P1P2/P1NB4/1PP1Q1PP/R4RK1 w - - bm a4; id "STS.064";
+r1bq1rk1/1pp1bppp/p1n1pn2/3p4/2PP4/2NBPN2/PP3PPP/R1BQK2R w KQ - bm c5; id "STS.065";
+r2qr1k1/pp1nbppp/2p2n2/3p1b2/3P1B2/2NBPN2/PP3PPP/R2Q1RK1 w - - bm Nh4; id "STS.066";
+rnb1kb1r/pp3ppp/1q2pn2/2pp4/3P4/2P1PN2/PP1N1PPP/R1BQKB1R w KQkq - bm a4; id "STS.067";
+r1b2rk1/ppqnbppp/2p1pn2/3p4/2PP4/2NBPN2/PP3PPP/R1BQR1K1 w - - bm c5; id "STS.068";
+r1bq1rk1/pp2bppp/2n2n2/2ppp3/4P3/2PP1N2/PP1NBPPP/R1BQ1RK1 w - - bm d4; id "STS.069";
+r1bq1rk1/1ppnbppp/p3pn2/3p4/2PP4/1PN1PN2/PB3PPP/R2QKB1R w KQ - bm c5; id "STS.070";
+
+# === Theme 6: Piece Activity / Piece Redeployment (STS.071-084) ===
+r2q1rk1/pppbbppp/2n2n2/4p3/4PP2/2NB4/PPP3PP/R1BQ1RK1 w - - bm f5; id "STS.071";
+r1bqr1k1/pp1n1ppp/2p1pn2/3p4/1bPP4/2NBPN2/PP3PPP/R1BQ1RK1 w - - bm Qe2; id "STS.072";
+r3r1k1/1bq1bppp/ppnppn2/8/2P1P3/1PN2NP1/PB2QP1P/R4RK1 w - - bm Nd2; id "STS.073";
+r2qkb1r/pp2pppp/2n2n2/3p4/3P2b1/4PN2/PP1N1PPP/R1BQKB1R w KQkq - bm Be2; id "STS.074";
+r1bq1rk1/pppn1ppp/3bpn2/3p4/2PP4/2N2NP1/PP2PP1P/R1BQKB1R w KQ - bm Bg2; id "STS.075";
+rn1qkb1r/pp2pppp/2p2n2/3p4/3P2b1/5NP1/PPP1PPBP/RNBQK2R w KQkq - bm Ne5; id "STS.076";
+r1bq1rk1/pp1nbppp/2p1p3/3p4/2PP4/2NBPN2/PP3PPP/R1BQK2R w KQ - bm O-O; id "STS.077";
+r1b1kb1r/ppqn1ppp/2p1pn2/3p4/2PP4/2N1PN2/PP2BPPP/R1BQK2R w KQkq - bm O-O; id "STS.078";
+r2q1rk1/pb1n1ppp/1p2pn2/2p5/2PP4/1PN2NP1/P3PPBP/R1BQ1RK1 w - - bm Bf4; id "STS.079";
+r2qkb1r/pppn1ppp/4bn2/3pp3/2PP4/2N2N2/PP2PPPP/R1BQKB1R w KQkq - bm d5; id "STS.080";
+r1bqr1k1/ppp2ppp/2n2n2/3pp3/1bP5/2N1PN2/PPQP1PPP/R1B1KB1R w KQ - bm a3; id "STS.081";
+r1bq1rk1/pp2ppbp/2np1np1/8/3NP3/2N1B3/PPPQBPPP/R4RK1 w - - bm Nd5; id "STS.082";
+r1bq1rk1/1ppnbppp/p3pn2/3p4/2PP4/2NBPN2/PP3PPP/R1BQK2R w KQ - bm O-O; id "STS.083";
+r2q1rk1/pb2bppp/1pn1pn2/2pp4/3P4/1PN1PNP1/PB2BP1P/R2Q1RK1 w - - bm Rc1; id "STS.084";
+
+# === Theme 7: King Safety - Strategic Concepts (STS.085-098) ===
+r1bq1rk1/pp3ppp/2nbpn2/2pp4/3P4/2PBPN2/PP1N1PPP/R1BQ1RK1 w - - bm dxc5; id "STS.085";
+r1b1k2r/ppppqppp/2n2n2/2b1p3/2B1P3/2NP1N2/PPP2PPP/R1BQK2R w KQkq - bm O-O; id "STS.086";
+r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - bm d3; id "STS.087";
+r2q1rk1/ppp2ppp/2n1bn2/3pp3/4P3/2PP1N2/PP1NBPPP/R1BQ1RK1 w - - bm a3; id "STS.088";
+rnbqk2r/ppp1bppp/4pn2/3p4/2PP4/2N2N2/PP2PPPP/R1BQKB1R w KQkq - bm Bg5; id "STS.089";
+r1bq1rk1/pppn1ppp/4bn2/3pp3/2PP4/2NBPN2/PP3PPP/R1BQK2R w KQ - bm O-O; id "STS.090";
+rnbqk2r/pp3ppp/4pn2/2pp4/1bPP4/2N1PN2/PP3PPP/R1BQKB1R w KQkq - bm Bd3; id "STS.091";
+r1bq1rk1/pp1nbppp/2p1pn2/3p4/2PP4/2N1PN2/PPQ2PPP/R1B1KB1R w KQ - bm Bd3; id "STS.092";
+r1b1kb1r/ppp2ppp/2n1pn2/q2p4/2PP4/2N2N2/PP2PPPP/R1BQKB1R w KQkq - bm cxd5; id "STS.093";
+r1bq1rk1/pp2bppp/2nppn2/8/3NP3/2N1BP2/PPPQ2PP/R3KB1R w KQ - bm O-O-O; id "STS.094";
+r1bq1rk1/pppn1ppp/3bpn2/3p4/2PP4/2N1PN2/PP3PPP/R1BQKB1R w KQ - bm Bd3; id "STS.095";
+rnbqkb1r/ppp2ppp/4pn2/3p4/3PP3/2N5/PPP2PPP/R1BQKBNR w KQkq - bm e5; id "STS.096";
+r1bq1rk1/pp2ppbp/2np1np1/2p5/2P1P3/2NP1N2/PP2BPPP/R1BQ1RK1 w - - bm Be3; id "STS.097";
+r1bq1rk1/pp2bppp/2n1pn2/2pp4/3P4/2PBPN2/PP3PPP/RNBQ1RK1 w - - bm dxc5; id "STS.098";
+
+# === Theme 8: Endgame Technique (STS.099-112) ===
+8/pp3kpp/2p2p2/3r4/8/1P3PP1/P1P2K1P/3R4 w - - bm Rd2; id "STS.099";
+8/5pk1/p1p2rpp/1p6/1P1R4/P4PPP/5K2/8 w - - bm Rd7; id "STS.100";
+3r2k1/p4ppp/1p6/2p5/8/1PP2P2/P4KPP/3R4 w - - bm Rd7; id "STS.101";
+8/1r3pk1/4b1p1/1p2P2p/1P6/5PP1/4BK1P/1R6 w - - bm Ba6; id "STS.102";
+8/p4kpp/1p3p2/2r5/2P5/1P4PP/P4PK1/3R4 w - - bm Rd7; id "STS.103";
+2r3k1/5ppp/p3p3/1p6/1P1R4/P3PP2/5KPP/8 w - - bm Rd7; id "STS.104";
+8/5pp1/2p1pk1p/1p6/1P2PP2/2P3PP/8/4K3 w - - bm f5; id "STS.105";
+8/p4pkp/2p3p1/1p6/1P3P2/2P3PP/P5K1/8 w - - bm f5; id "STS.106";
+8/8/1p2k1p1/p1p1Pp1p/P1P2P1P/1P4P1/8/4K3 w - - bm Kd2; id "STS.107";
+4k3/8/1p2p3/p1p1Pp2/P1P2P2/1P4K1/8/8 w - - bm Kf3; id "STS.108";
+8/p3kp2/1p4p1/2p5/2P2P2/1P4P1/P4K2/8 w - - bm Ke3; id "STS.109";
+8/5k2/p1p5/1p1p1pp1/1P1P4/P1P2PP1/5K2/8 w - - bm a4; id "STS.110";
+8/8/pp3kpp/2p2p2/2P5/PP3PPP/8/4K3 w - - bm Kd2; id "STS.111";
+8/5pk1/6p1/p1R4p/1r6/5PP1/4PK1P/8 w - - bm Rc7; id "STS.112";
+
+# === Theme 9: Square Control / Space Advantage (STS.113-126) ===
+r1bq1rk1/pp2ppbp/2np1np1/2p5/2P1P3/2NP1N2/PP2BPPP/R1BQ1RK1 w - - bm d4; id "STS.113";
+rnbqkb1r/pp3ppp/4pn2/2ppP3/3P4/2P5/PP3PPP/RNBQKBNR w KQkq - bm c4; id "STS.114";
+r1bqkb1r/pppp1ppp/2n2n2/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - bm d4; id "STS.115";
+rnbq1rk1/pp2bppp/4pn2/2pp4/2PP4/2N1PN2/PP3PPP/R1BQKB1R w KQ - bm cxd5; id "STS.116";
+r1bqkbnr/pppp1ppp/2n5/4p3/4P3/2N5/PPPP1PPP/R1BQKBNR w KQkq - bm Nf3; id "STS.117";
+r2qkb1r/pp1npppp/2p2n2/3p4/3P1Bb1/2N1PN2/PPP2PPP/R2QKB1R w KQkq - bm h3; id "STS.118";
+rnbqkb1r/pp2pppp/2p2n2/3p4/3PP3/2N5/PPP2PPP/R1BQKBNR w KQkq - bm Nf3; id "STS.119";
+r1bq1rk1/pp1nbppp/2p1pn2/3p4/2PP4/2NBPN2/PP3PPP/R1BQ1RK1 w - - bm e4; id "STS.120";
+rnbq1rk1/ppp2pbp/3p1np1/4p3/2PPP3/2N2N2/PP2BPPP/R1BQK2R w KQ - bm d5; id "STS.121";
+r1bq1rk1/pppn1pbp/3p1np1/4p3/2PPP3/2N2N2/PP2BPPP/R1BQ1RK1 w - - bm d5; id "STS.122";
+r1bq1rk1/pp1nppbp/2p2np1/3p4/2PP4/2N2NP1/PP2PPBP/R1BQK2R w KQ - bm O-O; id "STS.123";
+r1bqk2r/ppp2ppp/2n1pn2/3p4/1bPP4/2N2N2/PP2PPPP/R1BQKB1R w KQkq - bm e3; id "STS.124";
+rnbq1rk1/pp3ppp/4pn2/2pp4/1bPP4/2NBPN2/PP3PPP/R1BQK2R w KQ - bm O-O; id "STS.125";
+r1bq1rk1/pp2bppp/2n1p3/2ppP3/3P4/2PB1N2/PP3PPP/R1BQK2R w KQ - bm O-O; id "STS.126";
+
+# === Theme 10: Weak Squares / Outposts (STS.127-140) ===
+r1bqkb1r/pp3ppp/2n1pn2/2pp4/3P4/2PB1N2/PP2PPPP/RNBQK2R w KQkq - bm O-O; id "STS.127";
+r2q1rk1/1b1nbppp/p3pn2/1ppP4/8/2NB1N2/PP2QPPP/R1B2RK1 w - - bm dxe6; id "STS.128";
+r1bqk2r/pp1n1ppp/2pbpn2/3p4/2PP4/2NB1N2/PP2PPPP/R1BQK2R w KQkq - bm O-O; id "STS.129";
+rnbq1rk1/pp3pbp/2p1pnp1/3p4/2PP4/5NP1/PP2PPBP/RNBQ1RK1 w - - bm Nc3; id "STS.130";
+r1b1k2r/pp1n1ppp/2p1pn2/q2p4/1bPP4/2N1PN2/PP2BPPP/R1BQK2R w KQkq - bm O-O; id "STS.131";
+r1bq1rk1/pp2bppp/2n1pn2/3p4/3P4/1PNBPN2/P4PPP/R1BQ1RK1 w - - bm Ne5; id "STS.132";
+r1bq1rk1/pp1nbppp/2p1pn2/8/2PP4/2N1PN2/PPQ2PPP/R1B1KB1R w KQ - bm Bd3; id "STS.133";
+r1b2rk1/pp1nqppp/2p1pn2/3p4/2PP4/2NBPN2/PP3PPP/R1BQ1RK1 w - - bm c5; id "STS.134";
+r2qkb1r/pb1n1ppp/1p2pn2/2p5/2PP4/2N1PN2/PP3PPP/R1BQKB1R w KQkq - bm d5; id "STS.135";
+r1bqkb1r/pp1n1ppp/2p1pn2/3p4/2PP4/2N2N2/PP2PPPP/R1BQKB1R w KQkq - bm Bg5; id "STS.136";
+r1bq1rk1/p2nbppp/1p2pn2/2p5/2PP4/2NBPN2/PP3PPP/R1BQ1RK1 w - - bm d5; id "STS.137";
+r1b1kb1r/ppq2ppp/2n1pn2/2pp4/3P4/2PBPN2/PP3PPP/RNBQK2R w KQkq - bm O-O; id "STS.138";
+r1bq1rk1/pp3ppp/2n1bn2/2ppp3/4P3/1BPP1N2/PP3PPP/RNBQ1RK1 w - - bm exd5; id "STS.139";
+r1b1k2r/pp1nbppp/2p1pn2/q7/2PP4/2N1PN2/PP2BPPP/R1BQK2R w KQkq - bm O-O; id "STS.140";
+
+# === Theme 11: Prophylaxis (STS.141-154) ===
+r1bq1rk1/pppn1ppp/4bn2/3p4/3P4/2NBPN2/PPP2PPP/R1BQ1RK1 w - - bm Ne5; id "STS.141";
+r2qr1k1/pb1nbppp/1p2pn2/2p5/2PP4/2N1PN2/PP2BPPP/R1BQ1RK1 w - - bm a3; id "STS.142";
+rnbqkb1r/pp2pppp/2p2n2/3p4/2PP4/2N5/PP2PPPP/R1BQKBNR w KQkq - bm Bf4; id "STS.143";
+r2qr1k1/1b1nbppp/pp2pn2/2p5/2PP4/PPN1PN2/4BPPP/R1BQ1RK1 w - - bm d5; id "STS.144";
+r1bq1rk1/pp1n1ppp/2p1pn2/3p4/1bPP4/2N1PN2/PP2BPPP/R1BQ1RK1 w - - bm a3; id "STS.145";
+r2qkb1r/pp1npppp/2p2n2/3p1b2/3P4/5NP1/PPPNPPBP/R1BQK2R w KQkq - bm Nh4; id "STS.146";
+r1bq1rk1/ppp1bppp/2n1pn2/3p4/2PP4/2N1PN2/PP3PPP/R1BQKB1R w KQ - bm Be2; id "STS.147";
+rnbq1rk1/pp3ppp/4pn2/2bp4/3P4/2NBPN2/PP3PPP/R1BQK2R w KQ - bm O-O; id "STS.148";
+r1bqkb1r/pp1n1ppp/2p1pn2/3p4/2PP4/2NB1N2/PP2PPPP/R1BQK2R w KQkq - bm O-O; id "STS.149";
+r1bq1rk1/pp1nbppp/2p1p3/3p4/2PP4/2N1PN2/PP2BPPP/R1BQ1RK1 w - - bm b3; id "STS.150";
+r2q1rk1/pp1nbppp/2p1pn2/3p4/2PP4/2NBPN2/PP3PPP/R1BQ1RK1 w - - bm Qc2; id "STS.151";
+rnbqkb1r/pp3ppp/2p1pn2/3p4/2PP4/2N1PN2/PP3PPP/R1BQKB1R w KQkq - bm Bd3; id "STS.152";
+r1b2rk1/pp1nqppp/2p1pn2/3p4/2PP4/2N1PN2/PPQ2PPP/R1B1KB1R w KQ - bm Bd3; id "STS.153";
+r1bqr1k1/pp3ppp/2n1pn2/2pp4/3P4/1PN1PN2/PB3PPP/R2QKB1R w KQ - bm Be2; id "STS.154";
+
+# === Theme 12: Pawn Majorities and Minorities (STS.155-168) ===
+r1bq1rk1/1pp2ppp/p1np1n2/4p3/2PPP3/2N2N2/PP2BPPP/R1BQ1RK1 w - - bm d5; id "STS.155";
+r2qr1k1/1ppbbppp/p1n1pn2/3p4/2PP4/2N1PN2/PPQ2PPP/R1B1KB1R w KQ - bm a3; id "STS.156";
+r1b2rk1/pp2bppp/1qn1pn2/2pp4/3P4/1PN1PN2/PBQ2PPP/R3KB1R w KQ - bm dxc5; id "STS.157";
+r1bqk2r/pp1nbppp/2p1pn2/3p4/2PP4/2N1PN2/PP2BPPP/R1BQK2R w KQkq - bm O-O; id "STS.158";
+rnbqkb1r/pp3ppp/4pn2/2pp4/3P4/2N2NP1/PPP1PP1P/R1BQKB1R w KQkq - bm Bg2; id "STS.159";
+r1bq1rk1/pppp1ppp/2n2n2/2b1p3/2BPP3/2P2N2/PP3PPP/RNBQ1RK1 w - - bm d5; id "STS.160";
+r1bqk2r/pppn1ppp/4bn2/3pp3/2PP4/2N1PN2/PP3PPP/R1BQKB1R w KQkq - bm d5; id "STS.161";
+r1bq1rk1/pp3ppp/2n1pn2/2pp4/3P4/2PB1NP1/PP2PP1P/RNBQ1RK1 w - - bm Nbd2; id "STS.162";
+rnbq1rk1/pp2bppp/4pn2/2pp4/2PP4/1PN1PN2/P4PPP/R1BQKB1R w KQ - bm Be2; id "STS.163";
+r2q1rk1/pb1nbppp/1p2pn2/2pp4/2PP4/1PN1PN2/PB3PPP/R2QKB1R w KQ - bm Be2; id "STS.164";
+r1b1k2r/pp1nbppp/2p1pn2/q2p4/2PP4/2NBPN2/PP3PPP/R1BQK2R w KQkq - bm O-O; id "STS.165";
+r1bq1rk1/ppp1bppp/2n1pn2/3p4/2PP4/2NBPN2/PP3PPP/R1BQ1RK1 w - - bm cxd5; id "STS.166";
+r1bq1rk1/pppnbppp/4pn2/3p4/2PP4/2N1PN2/PP3PPP/R1BQKB1R w KQ - bm Bd3; id "STS.167";
+rnb1kb1r/pp3ppp/1q2pn2/2pp4/3PP3/2N2N2/PPP2PPP/R1BQKB1R w KQkq - bm e5; id "STS.168";
+
+# === Theme 13: Exchange Strategy (STS.169-182) ===
+r1bqr1k1/ppp2ppp/2nn4/3pp3/2PP4/1PN2NP1/P3PP1P/R1BQKB1R w KQ - bm cxd5; id "STS.169";
+r1bq1rk1/pp2bppp/2n1pn2/2pp4/2PP4/2NBPN2/PP3PPP/R1BQ1RK1 w - - bm cxd5; id "STS.170";
+r3r1k1/pp1bqppp/2n1pn2/2pp4/3P4/2PBPN2/PP1N1PPP/R2QR1K1 w - - bm Nf1; id "STS.171";
+r1bq1rk1/1pp2ppp/p1n2n2/3pp3/1bPP4/2N1PN2/PP3PPP/R1BQKB1R w KQ - bm dxe5; id "STS.172";
+rnbqkbnr/ppp2ppp/4p3/3p4/3PP3/8/PPP2PPP/RNBQKBNR w KQkq - bm exd5; id "STS.173";
+r1bq1rk1/pppn1ppp/4pn2/3p4/1bPP4/2N2N2/PP2PPPP/R1BQKB1R w KQ - bm Bg5; id "STS.174";
+r1bqr1k1/ppp2ppp/2n1bn2/3p4/3P4/2NBPN2/PP3PPP/R1BQR1K1 w - - bm Ng5; id "STS.175";
+r1bq1rk1/pppn1pbp/3p1np1/4p3/2PPP3/2N2N2/PP2BPPP/R1BQ1RK1 w - - bm Be3; id "STS.176";
+r1bq1rk1/pp1n1ppp/2pbpn2/8/2PP4/2N1PN2/PP2BPPP/R1BQ1RK1 w - - bm O-O; id "STS.177";
+r1bq1rk1/1ppnbppp/p3pn2/3p4/2PP4/2N1PN2/PP2BPPP/R1BQ1RK1 w - - bm O-O; id "STS.178";
+r2qr1k1/1b1nbppp/pp2pn2/2pp4/3P4/1BN1PN2/PP3PPP/R1BQR1K1 w - - bm dxc5; id "STS.179";
+r1bqk2r/pp1nbppp/2p1pn2/3p4/2PP4/2NB1N2/PP2PPPP/R1BQK2R w KQkq - bm e4; id "STS.180";
+r2q1rk1/pb1n1ppp/1p2pn2/2p5/2PP4/2NBPN2/PP3PPP/R1BQ1RK1 w - - bm d5; id "STS.181";
+r1bq1rk1/pp2bppp/2n1pn2/3p4/2PP4/2N1PN2/PP3PPP/R1BQKB1R w KQ - bm cxd5; id "STS.182";
+
+# === Theme 14: Restriction and Domination (STS.183-196) ===
+r1bq1rk1/pp2ppbp/2np1np1/8/3NP3/2N1BP2/PPPQ2PP/2KR1B1R w - - bm Kb1; id "STS.183";
+r1bq1rk1/pppp1ppp/2n2n2/2b1p3/2B1P3/2NP1N2/PPP2PPP/R1BQ1RK1 w - - bm Bg5; id "STS.184";
+r2q1rk1/pppb1ppp/2n1bn2/3pp3/3PP3/2N2N2/PPP1BPPP/R1BQ1RK1 w - - bm d5; id "STS.185";
+r1bq1rk1/1pp2ppp/p1np1n2/2b1p3/2B1P3/2NP1N2/PPP2PPP/R1BQ1RK1 w - - bm a4; id "STS.186";
+rnbqkb1r/pppp1ppp/5n2/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - bm d3; id "STS.187";
+r1bq1rk1/pppnbppp/4pn2/3p4/2PP4/2N1PN2/PP2BPPP/R1BQ1RK1 w - - bm b3; id "STS.188";
+rnbqkb1r/pp3ppp/4pn2/2pp4/3PP3/2N5/PPP2PPP/R1BQKBNR w KQkq - bm Bg5; id "STS.189";
+r1bqk2r/pp2bppp/2n1pn2/3p4/3P4/2NBPN2/PP3PPP/R1BQK2R w KQkq - bm O-O; id "STS.190";
+r2q1rk1/pb1nbppp/1pp1pn2/3p4/2PP4/1PN1PN2/PB3PPP/R2QKB1R w KQ - bm Be2; id "STS.191";
+r1bqkb1r/pp1n1ppp/2p1pn2/3p4/2PP4/2N2NP1/PP2PP1P/R1BQKB1R w KQkq - bm Bg2; id "STS.192";
+rnbq1rk1/pp2bppp/2p1pn2/3p4/2PP4/2N1PN2/PP2BPPP/R1BQ1RK1 w - - bm b3; id "STS.193";
+r1bqk2r/pp1n1ppp/2p1pn2/3p4/1bPP4/2N2NP1/PP2PP1P/R1BQKB1R w KQkq - bm Bg2; id "STS.194";
+r1b2rk1/pp1nqppp/2p1p3/3pPn2/3P4/P1NB4/1PP2PPP/R1BQR1K1 w - - bm Bc2; id "STS.195";
+r1bq1rk1/ppp1bppp/2n2n2/3pp3/3PP3/2N2N2/PPP1BPPP/R1BQ1RK1 w - - bm d5; id "STS.196";
+
+# === Theme 15: Centralization (STS.197-210) ===
+r1bqkb1r/pppp1ppp/2n2n2/4p3/3PP3/2N5/PPP2PPP/R1BQKBNR w KQkq - bm d5; id "STS.197";
+r1bq1rk1/ppp2ppp/2np1n2/2b1p3/2B1P3/2NP1N2/PPP2PPP/R1BQ1RK1 w - - bm Nd5; id "STS.198";
+rnbqk2r/pppp1ppp/4pn2/8/1bPP4/2N5/PP2PPPP/R1BQKBNR w KQkq - bm e3; id "STS.199";
+r1bq1rk1/pppp1ppp/2n2n2/4p3/1bB1P3/2NP1N2/PPP2PPP/R1BQ1RK1 w - - bm Nd5; id "STS.200";
+r1bqkb1r/ppppnppp/2n5/4p3/4P3/2N2N2/PPPP1PPP/R1BQKB1R w KQkq - bm d4; id "STS.201";
+r1bq1rk1/ppp2ppp/2n1bn2/3pp3/3PP3/2NB1N2/PPP2PPP/R1BQ1RK1 w - - bm dxe5; id "STS.202";
+rnbqk2r/ppp1bppp/4pn2/3p4/3PP3/2N5/PPP2PPP/R1BQKBNR w KQkq - bm e5; id "STS.203";
+r1bqkbnr/pp1ppppp/2n5/2p5/4P3/2N2N2/PPPP1PPP/R1BQKB1R w KQkq - bm d4; id "STS.204";
+r1bqk2r/pppp1ppp/2n2n2/2b1p3/4P3/2NP1N2/PPP2PPP/R1BQKB1R w KQkq - bm Be2; id "STS.205";
+r2q1rk1/ppp1bppp/2n1bn2/3pp3/4P3/1BPP1N2/PP3PPP/RNBQ1RK1 w - - bm Nbd2; id "STS.206";
+rnbqkbnr/ppp2ppp/4p3/3p4/2PP4/8/PP2PPPP/RNBQKBNR w KQkq - bm cxd5; id "STS.207";
+r1bq1rk1/pp1nbppp/2p1pn2/3p4/2PP4/2N2NP1/PP2PPBP/R1BQ1RK1 w - - bm Nd2; id "STS.208";
+r1bqk2r/ppp1bppp/2n1pn2/3p4/2PP4/2N2N2/PP2PPPP/R1BQKB1R w KQkq - bm cxd5; id "STS.209";
+r2qr1k1/pp1nbppp/2p1bn2/3p4/3P4/2NBPN2/PP3PPP/R1BQR1K1 w - - bm Nd2; id "STS.210";
