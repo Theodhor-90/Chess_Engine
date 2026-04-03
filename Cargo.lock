@@ -65,6 +65,7 @@ dependencies = [
  "chess-board",
  "chess-eval",
  "chess-movegen",
+ "chess-nnue",
  "chess-types",
 ]
 
@@ -84,12 +85,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "datagen"
+version = "0.1.0"
+dependencies = [
+ "chess-board",
+ "chess-movegen",
+ "chess-search",
+ "chess-types",
+]
+
+[[package]]
 name = "engine"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "chess-board",
  "chess-movegen",
+ "chess-nnue",
  "chess-search",
  "chess-types",
  "chess-uci",

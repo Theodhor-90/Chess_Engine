@@ -5,6 +5,7 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use chess_board::Position;
+use chess_nnue::Network;
 use chess_types::{File, Move, PieceKind, Rank, Square};
 
 const ENGINE_NAME: &str = "ChessEngine";
@@ -21,6 +22,8 @@ struct EngineState {
     book_mode: chess_engine::book::BookMode,
     syzygy_path: String,
     syzygy_probe_depth: u8,
+    nnue_network: Option<Arc<Network>>,
+    eval_mode: chess_search::EvalMode,
 }
 
 fn parse_uci_move(pos: &mut Position, move_str: &str) -> Option<Move> {
@@ -84,6 +87,8 @@ fn main() -> anyhow::Result<()> {
         book_mode: chess_engine::book::BookMode::BestMove,
         syzygy_path: String::new(),
         syzygy_probe_depth: 6,
+        nnue_network: None,
+        eval_mode: chess_search::EvalMode::Nnue,
     };
 
     let stdin = io::stdin();
@@ -111,6 +116,11 @@ fn main() -> anyhow::Result<()> {
                 println!(
                     "{}",
                     chess_uci::output::option_spin("SyzygyProbeDepth", 6, 0, 7)
+                );
+                println!("{}", chess_uci::output::option_string("EvalFile", ""));
+                println!(
+                    "{}",
+                    chess_uci::output::option_combo("EvalMode", "nnue", &["nnue", "classical"])
                 );
                 println!("{}", chess_uci::output::uciok());
                 io::stdout().flush().ok();
@@ -198,6 +208,50 @@ fn main() -> anyhow::Result<()> {
                         if let Some(ref val) = value {
                             if let Ok(n) = val.parse::<u8>() {
                                 state.syzygy_probe_depth = n.min(7);
+                            }
+                        }
+                    }
+                    "evalfile" => {
+                        if let Some(path) = value {
+                            if path.is_empty() {
+                                state.nnue_network = None;
+                            } else {
+                                match chess_nnue::load(std::path::Path::new(&path)) {
+                                    Ok(net) => {
+                                        state.nnue_network = Some(Arc::new(net));
+                                        println!(
+                                            "{}",
+                                            chess_uci::output::info_string(&format!(
+                                                "loaded NNUE network from {path}"
+                                            ))
+                                        );
+                                        io::stdout().flush().ok();
+                                    }
+                                    Err(e) => {
+                                        println!(
+                                            "{}",
+                                            chess_uci::output::info_string(&format!(
+                                                "failed to load NNUE network: {e}"
+                                            ))
+                                        );
+                                        io::stdout().flush().ok();
+                                    }
+                                }
+                            }
+                        } else {
+                            state.nnue_network = None;
+                        }
+                    }
+                    "evalmode" => {
+                        if let Some(val) = value {
+                            match val.to_lowercase().as_str() {
+                                "nnue" => {
+                                    state.eval_mode = chess_search::EvalMode::Nnue;
+                                }
+                                "classical" => {
+                                    state.eval_mode = chess_search::EvalMode::Classical;
+                                }
+                                _ => {}
                             }
                         }
                     }
@@ -296,6 +350,14 @@ fn main() -> anyhow::Result<()> {
                     } else {
                         None
                     };
+                let network = state.nnue_network.clone();
+                let eval_mode = if state.nnue_network.is_some()
+                    && state.eval_mode == chess_search::EvalMode::Nnue
+                {
+                    chess_search::EvalMode::Nnue
+                } else {
+                    chess_search::EvalMode::Classical
+                };
                 state.search_handle = Some(std::thread::spawn(move || {
                     let result = chess_search::search(
                         &mut search_pos,
@@ -323,6 +385,8 @@ fn main() -> anyhow::Result<()> {
                         tb_prober
                             .as_mut()
                             .map(|t| t as &mut dyn chess_search::TbProber),
+                        network,
+                        eval_mode,
                     );
                     if let Some(mv) = result {
                         println!("{}", chess_uci::output::bestmove(mv, None));
