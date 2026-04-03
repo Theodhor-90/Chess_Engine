@@ -11,6 +11,8 @@ pub enum UciError {
     InvalidPosition(String),
     #[error("invalid go parameter: {0}")]
     InvalidGoParam(String),
+    #[error("invalid setoption command: {0}")]
+    InvalidSetOption(String),
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -37,6 +39,10 @@ pub enum UciCommand {
         moves: Vec<String>,
     },
     Go(GoParams),
+    SetOption {
+        name: String,
+        value: Option<String>,
+    },
     Stop,
     PonderHit,
     Quit,
@@ -134,6 +140,25 @@ fn parse_go_value<T: std::str::FromStr>(tokens: &[&str], i: usize) -> Result<T, 
         .map_err(|_| UciError::InvalidGoParam(format!("invalid value '{token}'")))
 }
 
+fn parse_setoption(tokens: &[&str]) -> Result<UciCommand, UciError> {
+    if tokens.is_empty() || tokens[0] != "name" {
+        return Err(UciError::InvalidSetOption("missing 'name' keyword".into()));
+    }
+    let rest = &tokens[1..];
+    let value_pos = rest.iter().position(|&t| t == "value");
+    let (name_tokens, value_str) = match value_pos {
+        Some(pos) => (&rest[..pos], Some(rest[pos + 1..].join(" "))),
+        None => (rest, None),
+    };
+    if name_tokens.is_empty() {
+        return Err(UciError::InvalidSetOption("empty option name".into()));
+    }
+    Ok(UciCommand::SetOption {
+        name: name_tokens.join(" "),
+        value: value_str,
+    })
+}
+
 pub fn parse(input: &str) -> Result<UciCommand, UciError> {
     let tokens: Vec<&str> = input.split_whitespace().collect();
 
@@ -150,6 +175,7 @@ pub fn parse(input: &str) -> Result<UciCommand, UciError> {
         "quit" => Ok(UciCommand::Quit),
         "position" => parse_position(&tokens[1..]),
         "go" => parse_go(&tokens[1..]),
+        "setoption" => parse_setoption(&tokens[1..]),
         other => Err(UciError::UnknownCommand(other.to_string())),
     }
 }
@@ -351,5 +377,46 @@ mod tests {
     #[test]
     fn parse_ponderhit() {
         assert_eq!(parse("ponderhit").unwrap(), UciCommand::PonderHit);
+    }
+
+    #[test]
+    fn parse_setoption_name_and_value() {
+        assert_eq!(
+            parse("setoption name BookFile value /path/to/book.bin").unwrap(),
+            UciCommand::SetOption {
+                name: "BookFile".to_string(),
+                value: Some("/path/to/book.bin".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_setoption_name_only() {
+        assert_eq!(
+            parse("setoption name BookFile").unwrap(),
+            UciCommand::SetOption {
+                name: "BookFile".to_string(),
+                value: None,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_setoption_combo_value() {
+        assert_eq!(
+            parse("setoption name BookMode value weighted").unwrap(),
+            UciCommand::SetOption {
+                name: "BookMode".to_string(),
+                value: Some("weighted".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_setoption_missing_name() {
+        assert!(matches!(
+            parse("setoption"),
+            Err(UciError::InvalidSetOption(_))
+        ));
     }
 }

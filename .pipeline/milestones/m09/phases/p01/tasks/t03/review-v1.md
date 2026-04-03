@@ -1,0 +1,1 @@
+The full `cargo test` run also completed successfully (exit code 0), including the long-running perft suite. All tests pass across the entire project. The review verdict remains **approved**.

@@ -1,0 +1,2 @@
+- **`crates/engine/Cargo.toml`** — Added `rand = "0.8"` dependency
+- **`crates/engine/src/book/mod.rs`** — Added `use rand::Rng`; added `BookMode` enum (`BestMove`, `Weighted`); added `select_book_move` function with best-move (first-encountered max weight) and weighted (probability proportional to weight) selection logic; added 5 unit tests: `bestmove_returns_highest_weight`, `bestmove_deterministic_tie_breaking`, `empty_entries_returns_none`, `weighted_distribution_consistent`, `single_entry_always_selected`

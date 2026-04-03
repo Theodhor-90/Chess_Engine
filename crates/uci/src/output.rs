@@ -110,6 +110,19 @@ pub fn readyok() -> String {
     "readyok".to_string()
 }
 
+pub fn option_string(name: &str, default: &str) -> String {
+    format!("option name {name} type string default {default}")
+}
+
+pub fn option_combo(name: &str, default: &str, vars: &[&str]) -> String {
+    let var_str: String = vars.iter().map(|v| format!(" var {v}")).collect();
+    format!("option name {name} type combo default {default}{var_str}")
+}
+
+pub fn info_string(msg: &str) -> String {
+    format!("info string {msg}")
+}
+
 /// Returns `"bestmove <move>"` or `"bestmove <move> ponder <move>"`.
 pub fn bestmove(mv: Move, ponder: Option<Move>) -> String {
     match ponder {
@@ -255,5 +268,26 @@ mod tests {
             InfoFields::new().time(1500).to_uci_string(),
             Some("info time 1500".to_string())
         );
+    }
+
+    #[test]
+    fn test_option_string() {
+        assert_eq!(
+            option_string("BookFile", ""),
+            "option name BookFile type string default "
+        );
+    }
+
+    #[test]
+    fn test_option_combo() {
+        assert_eq!(
+            option_combo("BookMode", "bestmove", &["bestmove", "weighted"]),
+            "option name BookMode type combo default bestmove var bestmove var weighted"
+        );
+    }
+
+    #[test]
+    fn test_info_string() {
+        assert_eq!(info_string("book move e2e4"), "info string book move e2e4");
     }
 }

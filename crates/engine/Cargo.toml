@@ -3,6 +3,10 @@ name = "engine"
 version = "0.1.0"
 edition.workspace = true
 
+[lib]
+name = "chess_engine"
+path = "src/lib.rs"
+
 [[bin]]
 name = "engine"
 path = "src/main.rs"
@@ -14,3 +18,4 @@ chess-movegen = { path = "../movegen" }
 chess-board = { path = "../board" }
 chess-types = { path = "../types" }
 anyhow = "1"
+rand = "0.8"

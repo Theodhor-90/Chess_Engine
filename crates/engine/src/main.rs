@@ -17,6 +17,8 @@ struct EngineState {
     stop_flag: Arc<AtomicBool>,
     pondering: bool,
     ponder_params: Option<chess_uci::GoParams>,
+    book: Option<chess_engine::book::PolyglotBook>,
+    book_mode: chess_engine::book::BookMode,
 }
 
 fn parse_uci_move(pos: &mut Position, move_str: &str) -> Option<Move> {
@@ -76,6 +78,8 @@ fn main() -> anyhow::Result<()> {
         stop_flag: Arc::new(AtomicBool::new(false)),
         pondering: false,
         ponder_params: None,
+        book: None,
+        book_mode: chess_engine::book::BookMode::BestMove,
     };
 
     let stdin = io::stdin();
@@ -90,6 +94,15 @@ fn main() -> anyhow::Result<()> {
             chess_uci::UciCommand::Uci => {
                 println!("{}", chess_uci::output::id_name(ENGINE_NAME));
                 println!("{}", chess_uci::output::id_author(ENGINE_AUTHOR));
+                println!("{}", chess_uci::output::option_string("BookFile", ""));
+                println!(
+                    "{}",
+                    chess_uci::output::option_combo(
+                        "BookMode",
+                        "bestmove",
+                        &["bestmove", "weighted"]
+                    )
+                );
                 println!("{}", chess_uci::output::uciok());
                 io::stdout().flush().ok();
             }
@@ -124,8 +137,69 @@ fn main() -> anyhow::Result<()> {
                 state.position = pos;
                 state.game_history = game_history;
             }
+            chess_uci::UciCommand::SetOption { name, value } => {
+                match name.to_lowercase().as_str() {
+                    "bookfile" => {
+                        if let Some(path) = value {
+                            if path.is_empty() {
+                                state.book = None;
+                            } else {
+                                match chess_engine::book::PolyglotBook::from_file(&path) {
+                                    Ok(b) => state.book = Some(b),
+                                    Err(e) => {
+                                        println!(
+                                            "{}",
+                                            chess_uci::output::info_string(&format!(
+                                                "failed to load book: {e}"
+                                            ))
+                                        );
+                                        io::stdout().flush().ok();
+                                    }
+                                }
+                            }
+                        } else {
+                            state.book = None;
+                        }
+                    }
+                    "bookmode" => {
+                        if let Some(val) = value {
+                            match val.to_lowercase().as_str() {
+                                "bestmove" => {
+                                    state.book_mode = chess_engine::book::BookMode::BestMove
+                                }
+                                "weighted" => {
+                                    state.book_mode = chess_engine::book::BookMode::Weighted
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
             chess_uci::UciCommand::Go(params) => {
                 stop_search(&mut state);
+
+                if let Some(ref book) = state.book {
+                    let key = chess_engine::book::polyglot_hash(&state.position);
+                    let entries = book.probe(key);
+                    if !entries.is_empty() {
+                        if let Some(mv) = chess_engine::book::select_book_move(
+                            &mut state.position,
+                            entries,
+                            state.book_mode,
+                        ) {
+                            println!(
+                                "{}",
+                                chess_uci::output::info_string(&format!("book move {mv}"))
+                            );
+                            println!("{}", chess_uci::output::bestmove(mv, None));
+                            io::stdout().flush().ok();
+                            continue;
+                        }
+                    }
+                }
+
                 state.stop_flag = Arc::new(AtomicBool::new(false));
 
                 let no_limit = Duration::from_secs(86400);
