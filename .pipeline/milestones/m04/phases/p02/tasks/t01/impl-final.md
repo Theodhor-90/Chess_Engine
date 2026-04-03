@@ -1,0 +1,3 @@
+- **`crates/uci/src/time.rs`** — Created. `allocate_time(params, side) -> Duration` pure function implementing `time_left / moves_to_go + increment` with default movestogo=25, fallback `Duration::from_secs(1)` when no time info, 1ms floor clamp. Six inline unit tests: `sudden_death_no_increment`, `sudden_death_with_increment`, `movestogo_with_increment`, `movestogo_without_increment`, `very_low_time`, `zero_increment_no_movestogo`.
+- **`crates/uci/src/lib.rs`** — Added `pub mod time;` declaration.
+- **Verification**: `cargo test -p chess-uci` — 45/45 pass. `cargo clippy -p chess-uci -- -D warnings` — clean. `cargo fmt --check` — clean.

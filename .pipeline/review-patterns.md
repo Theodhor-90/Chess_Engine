@@ -7,3 +7,8 @@
 
 1. **Critical** — `Cargo.toml`: `"crates/engine"` missing from workspace members, so the engine binary can't be built
 2. **Major** — `crates/search/src/lib.rs:174`: Clippy `type_complexity` lint failure on the `on_depth` parameter
+- [m04/p02/t03] critical: Build failure: EngineState initializer at line 71 is missing the new `pondering` and `ponder_params` fields (error E0063: missing fields).
+- [m04/p02/t03] critical: Build failure: The `search()` call at line 137 still uses the old 4-argument signature `search(pos, time_budget, Some(stop), callback)` instead of the new `SearchLimits`-based 3-argument signature `search(pos, limits, callback)` (errors E0061, E0308).
+- [m04/p02/t03] critical: Missing PonderHit match arm: The `match cmd` block does not handle `UciCommand::PonderHit`, which would cause a non-exhaustive match error. The plan requires a PonderHit handler that computes a time budget from stored ponder_params and spawns a timer thread to set the stop flag.
+- [m04/p02/t03] critical: Go handler not updated: The Go match arm does not construct a `SearchLimits` struct. It still computes a `time_budget: Duration` directly. Per the plan, it must construct `SearchLimits` with `max_depth`, `max_nodes`, `max_time`, and `stop_flag` based on the Go variant (ponder/depth/nodes/movetime/infinite/wtime+btime).
+- [m04/p02/t03] major: Stop handler not updated: Per the plan, the Stop handler should set `state.pondering = false` to clear pondering state. This is missing.
