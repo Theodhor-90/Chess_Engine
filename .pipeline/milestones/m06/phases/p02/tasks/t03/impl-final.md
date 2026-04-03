@@ -1,0 +1,1 @@
+All fixes are complete. Summary already provided above — all 110 search crate tests pass, `cargo clippy --workspace -- -D warnings` passes, and `cargo fmt --check` passes.

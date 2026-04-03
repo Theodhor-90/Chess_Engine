@@ -33,7 +33,7 @@ const fn init_knight_attacks() -> [Bitboard; 64] {
     table
 }
 
-const KNIGHT_ATTACKS: [Bitboard; 64] = init_knight_attacks();
+pub const KNIGHT_ATTACKS: [Bitboard; 64] = init_knight_attacks();
 
 pub fn generate_knight_moves(pos: &Position, moves: &mut Vec<Move>) {
     let us = pos.side_to_move();

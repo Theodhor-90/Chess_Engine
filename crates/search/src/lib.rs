@@ -1,6 +1,9 @@
+pub mod countermove;
+pub mod history;
 pub mod killer;
 pub mod ordering;
 pub mod pv_table;
+pub mod see;
 pub mod tt;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -11,6 +14,8 @@ use std::time::{Duration, Instant};
 use chess_board::Position;
 use chess_types::{Color, Move, Piece, PieceKind, Square};
 
+use countermove::CounterMoveTable;
+use history::HistoryTable;
 use killer::KillerTable;
 use pv_table::PvTable;
 use tt::{score_from_tt, score_to_tt, verification_key, BoundType, TranspositionTable, TtEntry};
@@ -39,6 +44,8 @@ pub struct SearchContext {
     nodes: u64,
     aborted: bool,
     killers: KillerTable,
+    history_table: HistoryTable,
+    countermove_table: CounterMoveTable,
     pv_table: PvTable,
     prev_pv: Vec<Move>,
     stop_flag: Option<Arc<AtomicBool>>,
@@ -127,7 +134,19 @@ pub fn quiescence(
         .into_iter()
         .filter(|mv| mv.is_capture() || mv.is_promotion())
         .collect();
-    ordering::order_moves(&mut tactical, pos, &ctx.killers, ply, None, None);
+    ordering::order_moves(
+        &mut tactical,
+        pos,
+        &ctx.killers,
+        &ctx.history_table,
+        &ctx.countermove_table,
+        ply,
+        None,
+        None,
+        pos.side_to_move(),
+        None,
+        None,
+    );
     for mv in tactical {
         let undo = pos.make_move(mv);
         let score = -quiescence(pos, -beta, -alpha, ply + 1, ctx);
@@ -148,6 +167,7 @@ pub fn quiescence(
     alpha
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn negamax(
     pos: &mut Position,
     depth: u8,
@@ -156,6 +176,7 @@ pub fn negamax(
     ply: u8,
     allow_null: bool,
     ctx: &mut SearchContext,
+    prev_move: Option<(PieceKind, Move)>,
 ) -> (i32, Option<Move>) {
     ctx.nodes += 1;
     if ctx.nodes & 1023 == 0 {
@@ -203,6 +224,14 @@ pub fn negamax(
                 BoundType::Exact => return (tt_score, tt_move),
                 BoundType::LowerBound => {
                     if tt_score >= beta {
+                        if let Some(tm) = tt_move {
+                            if !tm.is_capture() && !tm.is_promotion() {
+                                let bonus = (depth as i32) * (depth as i32);
+                                let side = pos.side_to_move();
+                                ctx.history_table
+                                    .update(side, tm.from_sq(), tm.to_sq(), bonus);
+                            }
+                        }
                         return (beta, tt_move);
                     }
                 }
@@ -230,7 +259,16 @@ pub fn negamax(
         let r: u8 = if depth <= 6 { 2 } else { 3 };
         let null_undo = pos.make_null_move();
         ctx.history.push(pos.hash());
-        let (null_score, _) = negamax(pos, depth - 1 - r, -beta, -beta + 1, ply + 1, false, ctx);
+        let (null_score, _) = negamax(
+            pos,
+            depth - 1 - r,
+            -beta,
+            -beta + 1,
+            ply + 1,
+            false,
+            ctx,
+            None,
+        );
         let null_score = -null_score;
         ctx.history.pop();
         pos.unmake_null_move(null_undo);
@@ -270,7 +308,7 @@ pub fn negamax(
     // Internal iterative deepening: if no TT move and depth is sufficient,
     // do a reduced-depth search to populate the TT with a move for ordering.
     if tt_move.is_none() && depth as i32 >= IID_MIN_DEPTH {
-        negamax(pos, depth - 2, alpha, beta, ply, false, ctx);
+        negamax(pos, depth - 2, alpha, beta, ply, false, ctx, prev_move);
         if let Some(entry) = ctx.tt.probe(hash) {
             if let Some(iid_move) = entry.best_move() {
                 if moves.contains(&iid_move) {
@@ -281,7 +319,20 @@ pub fn negamax(
     }
 
     let pv_move = ctx.pv_move_at(ply);
-    ordering::order_moves(&mut moves, pos, &ctx.killers, ply, pv_move, tt_move);
+    let side = pos.side_to_move();
+    ordering::order_moves(
+        &mut moves,
+        pos,
+        &ctx.killers,
+        &ctx.history_table,
+        &ctx.countermove_table,
+        ply,
+        pv_move,
+        tt_move,
+        side,
+        prev_move.map(|(_, m)| m),
+        prev_move.map(|(pk, _)| pk),
+    );
 
     if moves.is_empty() {
         let king_sq = king_square(pos, pos.side_to_move());
@@ -294,15 +345,28 @@ pub fn negamax(
     }
 
     let mut best_move: Option<Move> = None;
+    let mut searched_quiets: Vec<Move> = Vec::new();
 
     for (moves_searched, mv) in (0_u32..).zip(moves.into_iter()) {
+        let piece_kind = pos
+            .piece_on(mv.from_sq())
+            .expect("piece must exist on from_sq")
+            .kind;
+
+        let is_tactical = mv.is_capture() || mv.is_promotion();
+
+        let see_score = if mv.is_capture() && !mv.is_promotion() {
+            see::see(pos, mv)
+        } else {
+            0
+        };
+
         let undo = pos.make_move(mv);
         ctx.history.push(pos.hash());
 
         let is_tt_move = tt_move == Some(mv);
         let is_pv_move = pv_move == Some(mv);
         let is_killer = ctx.killers.is_killer(ply, mv);
-        let is_tactical = mv.is_capture() || mv.is_promotion();
 
         let gives_check = {
             let opp_king_sq = king_square(pos, pos.side_to_move());
@@ -323,6 +387,20 @@ pub fn negamax(
                 pos.unmake_move(mv, undo);
                 continue;
             }
+        }
+
+        if mv.is_capture()
+            && !mv.is_promotion()
+            && !in_check
+            && !gives_check
+            && !is_tt_move
+            && !is_pv_move
+            && depth <= 3
+            && see_score < 0
+        {
+            ctx.history.pop();
+            pos.unmake_move(mv, undo);
+            continue;
         }
 
         let do_lmr = ctx.lmr_enabled
@@ -347,15 +425,42 @@ pub fn negamax(
             } else {
                 0
             };
-            let (s, _) = negamax(pos, reduced_depth, -alpha - 1, -alpha, ply + 1, true, ctx);
+            let (s, _) = negamax(
+                pos,
+                reduced_depth,
+                -alpha - 1,
+                -alpha,
+                ply + 1,
+                true,
+                ctx,
+                Some((piece_kind, mv)),
+            );
             score = -s;
 
             if score > alpha {
-                let (s2, _) = negamax(pos, depth - 1, -beta, -alpha, ply + 1, true, ctx);
+                let (s2, _) = negamax(
+                    pos,
+                    depth - 1,
+                    -beta,
+                    -alpha,
+                    ply + 1,
+                    true,
+                    ctx,
+                    Some((piece_kind, mv)),
+                );
                 score = -s2;
             }
         } else {
-            let (s, _) = negamax(pos, depth - 1, -beta, -alpha, ply + 1, true, ctx);
+            let (s, _) = negamax(
+                pos,
+                depth - 1,
+                -beta,
+                -alpha,
+                ply + 1,
+                true,
+                ctx,
+                Some((piece_kind, mv)),
+            );
             score = -s;
         }
 
@@ -366,6 +471,10 @@ pub fn negamax(
             return (0, None);
         }
 
+        if !mv.is_capture() && !mv.is_promotion() {
+            searched_quiets.push(mv);
+        }
+
         if score > alpha {
             alpha = score;
             best_move = Some(mv);
@@ -373,6 +482,20 @@ pub fn negamax(
             if alpha >= beta {
                 if !mv.is_capture() {
                     ctx.killers.store(ply, mv);
+                    let bonus = (depth as i32) * (depth as i32);
+                    let side = pos.side_to_move();
+                    ctx.history_table
+                        .update(side, mv.from_sq(), mv.to_sq(), bonus);
+                    for prev_mv in searched_quiets
+                        .iter()
+                        .take(searched_quiets.len().saturating_sub(1))
+                    {
+                        ctx.history_table
+                            .update(side, prev_mv.from_sq(), prev_mv.to_sq(), -bonus);
+                    }
+                    if let Some((prev_piece, prev_mv)) = prev_move {
+                        ctx.countermove_table.store(prev_piece, prev_mv.to_sq(), mv);
+                    }
                 }
                 break;
             }
@@ -412,6 +535,8 @@ pub fn search(
         nodes: 0,
         aborted: false,
         killers: KillerTable::new(),
+        history_table: HistoryTable::new(),
+        countermove_table: CounterMoveTable::new(),
         pv_table: PvTable::new(),
         prev_pv: Vec::new(),
         stop_flag: limits.stop_flag,
@@ -431,7 +556,7 @@ pub fn search(
     loop {
         ctx.aborted = false;
         ctx.pv_table.clear();
-        let (score, mv) = negamax(pos, depth, -INFINITY, INFINITY, 0, true, &mut ctx);
+        let (score, mv) = negamax(pos, depth, -INFINITY, INFINITY, 0, true, &mut ctx, None);
 
         if ctx.aborted {
             break;
@@ -479,6 +604,8 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
+            countermove_table: CounterMoveTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -496,7 +623,7 @@ mod tests {
             Position::from_fen("rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3")
                 .expect("valid fen");
         let mut ctx = test_ctx();
-        let (score, mv) = negamax(&mut pos, 1, -INFINITY, INFINITY, 0, true, &mut ctx);
+        let (score, mv) = negamax(&mut pos, 1, -INFINITY, INFINITY, 0, true, &mut ctx, None);
         assert_eq!(score, -MATE_SCORE);
         assert!(mv.is_none());
     }
@@ -507,7 +634,7 @@ mod tests {
             Position::from_fen("rnb1kbnr/pppp1ppp/4p3/8/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 0 3")
                 .expect("valid fen");
         let mut ctx = test_ctx();
-        let (score, mv) = negamax(&mut pos, 1, -INFINITY, INFINITY, 0, true, &mut ctx);
+        let (score, mv) = negamax(&mut pos, 1, -INFINITY, INFINITY, 0, true, &mut ctx, None);
         assert_eq!(score, -MATE_SCORE);
         assert!(mv.is_none());
     }
@@ -516,7 +643,7 @@ mod tests {
     fn stalemate_returns_zero() {
         let mut pos = Position::from_fen("k7/1R6/K7/8/8/8/8/8 b - - 0 1").expect("valid fen");
         let mut ctx = test_ctx();
-        let (score, mv) = negamax(&mut pos, 1, -INFINITY, INFINITY, 0, true, &mut ctx);
+        let (score, mv) = negamax(&mut pos, 1, -INFINITY, INFINITY, 0, true, &mut ctx, None);
         assert_eq!(score, 0);
         assert!(mv.is_none());
     }
@@ -525,7 +652,7 @@ mod tests {
     fn returns_legal_move_at_depth() {
         let mut pos = Position::startpos();
         let mut ctx = test_ctx();
-        let (_, mv) = negamax(&mut pos, 1, -INFINITY, INFINITY, 0, true, &mut ctx);
+        let (_, mv) = negamax(&mut pos, 1, -INFINITY, INFINITY, 0, true, &mut ctx, None);
         assert!(mv.is_some());
         let legal_moves = chess_movegen::generate_legal_moves(&mut pos);
         let best = mv.unwrap();
@@ -536,7 +663,7 @@ mod tests {
     fn prefers_capture_of_free_piece() {
         let mut pos = Position::from_fen("4k3/8/8/8/8/8/3q4/R3K3 w - - 0 1").expect("valid fen");
         let mut ctx = test_ctx();
-        let (score, mv) = negamax(&mut pos, 1, -INFINITY, INFINITY, 0, true, &mut ctx);
+        let (score, mv) = negamax(&mut pos, 1, -INFINITY, INFINITY, 0, true, &mut ctx, None);
         assert!(score > 0);
         assert!(mv.is_some());
         assert!(mv.unwrap().is_capture());
@@ -546,7 +673,7 @@ mod tests {
     fn alpha_beta_prunes() {
         let mut pos = Position::startpos();
         let mut ctx = test_ctx();
-        let (_, mv) = negamax(&mut pos, 3, -INFINITY, INFINITY, 0, true, &mut ctx);
+        let (_, mv) = negamax(&mut pos, 3, -INFINITY, INFINITY, 0, true, &mut ctx, None);
         assert!(mv.is_some());
     }
 
@@ -571,7 +698,7 @@ mod tests {
     fn negamax_uses_quiescence_for_tactics() {
         let mut pos = Position::from_fen("4k3/8/8/R2b4/8/8/8/4K3 w - - 0 1").expect("valid fen");
         let mut ctx = test_ctx();
-        let (score, mv) = negamax(&mut pos, 1, -INFINITY, INFINITY, 0, true, &mut ctx);
+        let (score, mv) = negamax(&mut pos, 1, -INFINITY, INFINITY, 0, true, &mut ctx, None);
         assert!(score > 0);
         assert!(mv.is_some());
         assert!(mv.unwrap().is_capture());
@@ -676,7 +803,7 @@ mod tests {
     fn node_counter_increments() {
         let mut pos = Position::startpos();
         let mut ctx = test_ctx();
-        negamax(&mut pos, 2, -INFINITY, INFINITY, 0, true, &mut ctx);
+        negamax(&mut pos, 2, -INFINITY, INFINITY, 0, true, &mut ctx, None);
         assert!(ctx.nodes > 0);
     }
 
@@ -693,6 +820,8 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
+            countermove_table: CounterMoveTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -705,7 +834,16 @@ mod tests {
         // Run iterative deepening up to target depth to build PV
         for d in 1..=depth {
             ctx_pv.pv_table.clear();
-            negamax(&mut pos_pv, d, -INFINITY, INFINITY, 0, true, &mut ctx_pv);
+            negamax(
+                &mut pos_pv,
+                d,
+                -INFINITY,
+                INFINITY,
+                0,
+                true,
+                &mut ctx_pv,
+                None,
+            );
             ctx_pv.prev_pv = ctx_pv.pv_table.extract_pv();
         }
         let nodes_with_pv = ctx_pv.nodes;
@@ -718,6 +856,8 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
+            countermove_table: CounterMoveTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -738,6 +878,7 @@ mod tests {
                 0,
                 true,
                 &mut ctx_no_pv,
+                None,
             );
             // Intentionally do NOT set prev_pv
         }
@@ -851,7 +992,7 @@ mod tests {
     #[test]
     fn tt_reduces_node_count() {
         let fen = "r1bqkb1r/pppppppp/2n2n2/8/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3";
-        let depth: u8 = 5;
+        let depth: u8 = 6;
 
         // Search with TT enabled (normal code path via iterative deepening)
         let mut pos_tt = Position::from_fen(fen).expect("valid fen");
@@ -861,6 +1002,8 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
+            countermove_table: CounterMoveTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -873,7 +1016,16 @@ mod tests {
         ctx_tt.tt.new_generation();
         for d in 1..=depth {
             ctx_tt.pv_table.clear();
-            negamax(&mut pos_tt, d, -INFINITY, INFINITY, 0, true, &mut ctx_tt);
+            negamax(
+                &mut pos_tt,
+                d,
+                -INFINITY,
+                INFINITY,
+                0,
+                true,
+                &mut ctx_tt,
+                None,
+            );
             ctx_tt.prev_pv = ctx_tt.pv_table.extract_pv();
         }
         let nodes_with_tt = ctx_tt.nodes;
@@ -886,6 +1038,8 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
+            countermove_table: CounterMoveTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -905,6 +1059,7 @@ mod tests {
                 0,
                 true,
                 &mut ctx_no_tt,
+                None,
             );
             ctx_no_tt.prev_pv = ctx_no_tt.pv_table.extract_pv();
         }
@@ -931,6 +1086,8 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
+            countermove_table: CounterMoveTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -943,7 +1100,7 @@ mod tests {
         ctx.tt.new_generation();
         for d in 1..=4u8 {
             ctx.pv_table.clear();
-            negamax(&mut pos, d, -INFINITY, INFINITY, 0, true, &mut ctx);
+            negamax(&mut pos, d, -INFINITY, INFINITY, 0, true, &mut ctx, None);
             ctx.prev_pv = ctx.pv_table.extract_pv();
         }
 
@@ -955,7 +1112,20 @@ mod tests {
 
         let mut moves = chess_movegen::generate_legal_moves(&mut pos);
         let killers = KillerTable::new();
-        ordering::order_moves(&mut moves, &pos, &killers, 0, None, Some(tt_move));
+        let history = HistoryTable::new();
+        ordering::order_moves(
+            &mut moves,
+            &pos,
+            &killers,
+            &history,
+            &CounterMoveTable::new(),
+            0,
+            None,
+            Some(tt_move),
+            Color::White,
+            None,
+            None,
+        );
 
         assert_eq!(moves[0], tt_move, "TT move should be ordered first");
     }
@@ -972,6 +1142,8 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
+            countermove_table: CounterMoveTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -982,7 +1154,7 @@ mod tests {
             futility_enabled: true,
         };
         ctx.tt.new_generation();
-        let (score, mv) = negamax(&mut pos, 4, -INFINITY, INFINITY, 0, true, &mut ctx);
+        let (score, mv) = negamax(&mut pos, 4, -INFINITY, INFINITY, 0, true, &mut ctx, None);
 
         assert!(mv.is_some(), "should find a mating move");
         // Mate in 1 = 1 ply from root
@@ -1015,6 +1187,8 @@ mod tests {
                 nodes: 0,
                 aborted: false,
                 killers: KillerTable::new(),
+                history_table: HistoryTable::new(),
+                countermove_table: CounterMoveTable::new(),
                 pv_table: PvTable::new(),
                 prev_pv: Vec::new(),
                 stop_flag: None,
@@ -1027,7 +1201,7 @@ mod tests {
             ctx.tt.new_generation();
             for d in 1..=4u8 {
                 ctx.pv_table.clear();
-                negamax(&mut pos, d, -INFINITY, INFINITY, 0, true, &mut ctx);
+                negamax(&mut pos, d, -INFINITY, INFINITY, 0, true, &mut ctx, None);
                 ctx.prev_pv = ctx.pv_table.extract_pv();
             }
 
@@ -1039,7 +1213,20 @@ mod tests {
 
             let mut moves = chess_movegen::generate_legal_moves(&mut pos);
             let killers = KillerTable::new();
-            ordering::order_moves(&mut moves, &pos, &killers, 0, None, Some(tt_move));
+            let history = HistoryTable::new();
+            ordering::order_moves(
+                &mut moves,
+                &pos,
+                &killers,
+                &history,
+                &CounterMoveTable::new(),
+                0,
+                None,
+                Some(tt_move),
+                Color::White,
+                None,
+                None,
+            );
 
             assert_eq!(
                 moves[0], tt_move,
@@ -1072,6 +1259,8 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
+            countermove_table: CounterMoveTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -1095,7 +1284,7 @@ mod tests {
         ctx.tt.store(hash, entry);
 
         // Run negamax — should not crash and should return a valid move
-        let (score, mv) = negamax(&mut pos, 3, -INFINITY, INFINITY, 0, true, &mut ctx);
+        let (score, mv) = negamax(&mut pos, 3, -INFINITY, INFINITY, 0, true, &mut ctx, None);
         assert!(mv.is_some(), "negamax should return a valid move");
         let best = mv.unwrap();
         let legal_after = chess_movegen::generate_legal_moves(&mut pos);
@@ -1108,7 +1297,7 @@ mod tests {
     #[test]
     fn tt_move_ordering_reduces_nodes() {
         let fen = "r1bqkb1r/pppppppp/2n2n2/8/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3";
-        let depth: u8 = 5;
+        let depth: u8 = 6;
 
         // Search with TT enabled (1 MB TT — TT move ordering is effective)
         let mut pos_tt = Position::from_fen(fen).expect("valid fen");
@@ -1118,6 +1307,8 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
+            countermove_table: CounterMoveTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -1130,7 +1321,16 @@ mod tests {
         ctx_tt.tt.new_generation();
         for d in 1..=depth {
             ctx_tt.pv_table.clear();
-            negamax(&mut pos_tt, d, -INFINITY, INFINITY, 0, true, &mut ctx_tt);
+            negamax(
+                &mut pos_tt,
+                d,
+                -INFINITY,
+                INFINITY,
+                0,
+                true,
+                &mut ctx_tt,
+                None,
+            );
             ctx_tt.prev_pv = ctx_tt.pv_table.extract_pv();
         }
         let nodes_with_tt = ctx_tt.nodes;
@@ -1143,6 +1343,8 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
+            countermove_table: CounterMoveTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -1162,6 +1364,7 @@ mod tests {
                 0,
                 true,
                 &mut ctx_no_tt,
+                None,
             );
             ctx_no_tt.prev_pv = ctx_no_tt.pv_table.extract_pv();
         }
@@ -1178,7 +1381,7 @@ mod tests {
     #[test]
     fn iid_reduces_node_count() {
         let fen = "r1bqkb1r/pppppppp/2n2n2/8/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3";
-        let depth: u8 = 5;
+        let depth: u8 = 6;
 
         // Search with 1 MB TT (IID populates TT effectively)
         let mut pos_iid = Position::from_fen(fen).expect("valid fen");
@@ -1188,6 +1391,8 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
+            countermove_table: CounterMoveTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -1200,7 +1405,16 @@ mod tests {
         ctx_iid.tt.new_generation();
         for d in 1..=depth {
             ctx_iid.pv_table.clear();
-            negamax(&mut pos_iid, d, -INFINITY, INFINITY, 0, true, &mut ctx_iid);
+            negamax(
+                &mut pos_iid,
+                d,
+                -INFINITY,
+                INFINITY,
+                0,
+                true,
+                &mut ctx_iid,
+                None,
+            );
             ctx_iid.prev_pv = ctx_iid.pv_table.extract_pv();
         }
         let nodes_with_iid = ctx_iid.nodes;
@@ -1213,6 +1427,8 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
+            countermove_table: CounterMoveTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -1232,6 +1448,7 @@ mod tests {
                 0,
                 true,
                 &mut ctx_no_iid,
+                None,
             );
             ctx_no_iid.prev_pv = ctx_no_iid.pv_table.extract_pv();
         }
@@ -1256,6 +1473,8 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
+            countermove_table: CounterMoveTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -1273,6 +1492,8 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
+            countermove_table: CounterMoveTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -1284,8 +1505,12 @@ mod tests {
         };
         ctx_b.tt.new_generation();
 
-        negamax(&mut pos_a, 3, -INFINITY, INFINITY, 0, true, &mut ctx_a);
-        negamax(&mut pos_b, 3, -INFINITY, INFINITY, 0, true, &mut ctx_b);
+        negamax(
+            &mut pos_a, 3, -INFINITY, INFINITY, 0, true, &mut ctx_a, None,
+        );
+        negamax(
+            &mut pos_b, 3, -INFINITY, INFINITY, 0, true, &mut ctx_b, None,
+        );
 
         assert_eq!(
             ctx_a.nodes, ctx_b.nodes,
@@ -1306,6 +1531,8 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
+            countermove_table: CounterMoveTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -1317,7 +1544,7 @@ mod tests {
         };
         ctx.tt.new_generation();
 
-        let (_, mv) = negamax(&mut pos, 5, -INFINITY, INFINITY, 0, true, &mut ctx);
+        let (_, mv) = negamax(&mut pos, 5, -INFINITY, INFINITY, 0, true, &mut ctx, None);
 
         let entry = ctx
             .tt
@@ -1345,6 +1572,8 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
+            countermove_table: CounterMoveTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -1357,7 +1586,7 @@ mod tests {
         ctx.tt.new_generation();
 
         // At ply=1, the repetition check sees current_hash in history and returns (0, None)
-        let (score, mv) = negamax(&mut pos, 4, -INFINITY, INFINITY, 1, true, &mut ctx);
+        let (score, mv) = negamax(&mut pos, 4, -INFINITY, INFINITY, 1, true, &mut ctx, None);
 
         assert_eq!(score, 0, "threefold repetition should yield draw score 0");
         assert!(mv.is_none(), "repeated position should return no move");
@@ -1372,7 +1601,7 @@ mod tests {
         let mut ctx = test_ctx();
         ctx.tt.new_generation();
 
-        let (score, _) = negamax(&mut pos, 2, -INFINITY, INFINITY, 0, true, &mut ctx);
+        let (score, _) = negamax(&mut pos, 2, -INFINITY, INFINITY, 0, true, &mut ctx, None);
 
         assert_eq!(
             score, 0,
@@ -1416,6 +1645,8 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
+            countermove_table: CounterMoveTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -1428,7 +1659,7 @@ mod tests {
         ctx.tt.new_generation();
         ctx.history.push(pos2.hash());
 
-        let (score, _) = negamax(&mut pos2, 4, -INFINITY, INFINITY, 0, true, &mut ctx);
+        let (score, _) = negamax(&mut pos2, 4, -INFINITY, INFINITY, 0, true, &mut ctx, None);
 
         assert!(
             score > 0,
@@ -1469,6 +1700,8 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
+            countermove_table: CounterMoveTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -1480,7 +1713,8 @@ mod tests {
         };
         ctx.tt.new_generation();
 
-        let (score_with_history, _) = negamax(&mut pos, 4, -INFINITY, INFINITY, 0, true, &mut ctx);
+        let (score_with_history, _) =
+            negamax(&mut pos, 4, -INFINITY, INFINITY, 0, true, &mut ctx, None);
 
         // Search without repetition history for comparison
         let mut pos2 = Position::from_fen(fen).expect("valid fen");
@@ -1490,6 +1724,8 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
+            countermove_table: CounterMoveTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -1502,7 +1738,7 @@ mod tests {
         ctx2.tt.new_generation();
 
         let (score_without_history, _) =
-            negamax(&mut pos2, 4, -INFINITY, INFINITY, 0, true, &mut ctx2);
+            negamax(&mut pos2, 4, -INFINITY, INFINITY, 0, true, &mut ctx2, None);
 
         // With repetition available, the losing side should get a better (higher) score
         // because it can aim for a draw (score 0) instead of a deeply negative score.
@@ -1533,6 +1769,8 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
+            countermove_table: CounterMoveTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -1543,7 +1781,7 @@ mod tests {
             futility_enabled: true,
         };
         ctx_nmp.tt.new_generation();
-        negamax(&mut pos_nmp, depth, 0, 100, 1, true, &mut ctx_nmp);
+        negamax(&mut pos_nmp, depth, 0, 100, 1, true, &mut ctx_nmp, None);
         let nodes_with_nmp = ctx_nmp.nodes;
 
         // Search with NMP disabled at this node
@@ -1554,6 +1792,8 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
+            countermove_table: CounterMoveTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -1564,7 +1804,16 @@ mod tests {
             futility_enabled: true,
         };
         ctx_no_nmp.tt.new_generation();
-        negamax(&mut pos_no_nmp, depth, 0, 100, 1, false, &mut ctx_no_nmp);
+        negamax(
+            &mut pos_no_nmp,
+            depth,
+            0,
+            100,
+            1,
+            false,
+            &mut ctx_no_nmp,
+            None,
+        );
         let nodes_without_nmp = ctx_no_nmp.nodes;
 
         assert!(
@@ -1590,6 +1839,8 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
+            countermove_table: CounterMoveTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -1600,7 +1851,9 @@ mod tests {
             futility_enabled: true,
         };
         ctx_a.tt.new_generation();
-        negamax(&mut pos_a, depth, -INFINITY, INFINITY, 0, true, &mut ctx_a);
+        negamax(
+            &mut pos_a, depth, -INFINITY, INFINITY, 0, true, &mut ctx_a, None,
+        );
         let nodes_allow = ctx_a.nodes;
 
         let mut pos_b = Position::from_fen(fen).expect("valid fen");
@@ -1610,6 +1863,8 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
+            countermove_table: CounterMoveTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -1620,7 +1875,9 @@ mod tests {
             futility_enabled: true,
         };
         ctx_b.tt.new_generation();
-        negamax(&mut pos_b, depth, -INFINITY, INFINITY, 0, false, &mut ctx_b);
+        negamax(
+            &mut pos_b, depth, -INFINITY, INFINITY, 0, false, &mut ctx_b, None,
+        );
         let nodes_disallow = ctx_b.nodes;
 
         assert_eq!(
@@ -1644,6 +1901,8 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
+            countermove_table: CounterMoveTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -1654,7 +1913,9 @@ mod tests {
             futility_enabled: true,
         };
         ctx_a.tt.new_generation();
-        negamax(&mut pos_a, depth, -INFINITY, INFINITY, 0, true, &mut ctx_a);
+        negamax(
+            &mut pos_a, depth, -INFINITY, INFINITY, 0, true, &mut ctx_a, None,
+        );
         let nodes_allow = ctx_a.nodes;
 
         let mut pos_b = Position::from_fen(fen).expect("valid fen");
@@ -1664,6 +1925,8 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
+            countermove_table: CounterMoveTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -1674,7 +1937,9 @@ mod tests {
             futility_enabled: true,
         };
         ctx_b.tt.new_generation();
-        negamax(&mut pos_b, depth, -INFINITY, INFINITY, 0, false, &mut ctx_b);
+        negamax(
+            &mut pos_b, depth, -INFINITY, INFINITY, 0, false, &mut ctx_b, None,
+        );
         let nodes_disallow = ctx_b.nodes;
 
         assert_eq!(
@@ -1698,6 +1963,8 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
+            countermove_table: CounterMoveTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -1708,7 +1975,9 @@ mod tests {
             futility_enabled: true,
         };
         ctx_a.tt.new_generation();
-        negamax(&mut pos_a, depth, -INFINITY, INFINITY, 0, false, &mut ctx_a);
+        negamax(
+            &mut pos_a, depth, -INFINITY, INFINITY, 0, false, &mut ctx_a, None,
+        );
         let nodes_no_null_a = ctx_a.nodes;
 
         let mut pos_b = Position::from_fen(fen).expect("valid fen");
@@ -1718,6 +1987,8 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
+            countermove_table: CounterMoveTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -1728,7 +1999,9 @@ mod tests {
             futility_enabled: true,
         };
         ctx_b.tt.new_generation();
-        negamax(&mut pos_b, depth, -INFINITY, INFINITY, 0, false, &mut ctx_b);
+        negamax(
+            &mut pos_b, depth, -INFINITY, INFINITY, 0, false, &mut ctx_b, None,
+        );
         let nodes_no_null_b = ctx_b.nodes;
 
         assert_eq!(
@@ -1807,6 +2080,8 @@ mod tests {
                 nodes: 0,
                 aborted: false,
                 killers: KillerTable::new(),
+                history_table: HistoryTable::new(),
+                countermove_table: CounterMoveTable::new(),
                 pv_table: PvTable::new(),
                 prev_pv: Vec::new(),
                 stop_flag: None,
@@ -1819,7 +2094,16 @@ mod tests {
             ctx_lmr.tt.new_generation();
             for d in 1..=depth {
                 ctx_lmr.pv_table.clear();
-                negamax(&mut pos_lmr, d, -INFINITY, INFINITY, 0, true, &mut ctx_lmr);
+                negamax(
+                    &mut pos_lmr,
+                    d,
+                    -INFINITY,
+                    INFINITY,
+                    0,
+                    true,
+                    &mut ctx_lmr,
+                    None,
+                );
                 ctx_lmr.prev_pv = ctx_lmr.pv_table.extract_pv();
             }
             let nodes_with_lmr = ctx_lmr.nodes;
@@ -1832,6 +2116,8 @@ mod tests {
                 nodes: 0,
                 aborted: false,
                 killers: KillerTable::new(),
+                history_table: HistoryTable::new(),
+                countermove_table: CounterMoveTable::new(),
                 pv_table: PvTable::new(),
                 prev_pv: Vec::new(),
                 stop_flag: None,
@@ -1852,6 +2138,7 @@ mod tests {
                     0,
                     true,
                     &mut ctx_no_lmr,
+                    None,
                 );
                 ctx_no_lmr.prev_pv = ctx_no_lmr.pv_table.extract_pv();
             }
@@ -1897,6 +2184,8 @@ mod tests {
                 nodes: 0,
                 aborted: false,
                 killers: KillerTable::new(),
+                history_table: HistoryTable::new(),
+                countermove_table: CounterMoveTable::new(),
                 pv_table: PvTable::new(),
                 prev_pv: Vec::new(),
                 stop_flag: None,
@@ -1919,6 +2208,7 @@ mod tests {
                     0,
                     true,
                     &mut ctx_no_lmr,
+                    None,
                 );
                 ctx_no_lmr.prev_pv = ctx_no_lmr.pv_table.extract_pv();
                 if mv.is_some() {
@@ -1972,6 +2262,8 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
+            countermove_table: CounterMoveTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -1983,7 +2275,16 @@ mod tests {
         };
         for d in 1..=depth {
             ctx_on.pv_table.clear();
-            negamax(&mut pos_on, d, -INFINITY, INFINITY, 0, true, &mut ctx_on);
+            negamax(
+                &mut pos_on,
+                d,
+                -INFINITY,
+                INFINITY,
+                0,
+                true,
+                &mut ctx_on,
+                None,
+            );
             ctx_on.prev_pv = ctx_on.pv_table.extract_pv();
         }
         let nodes_on = ctx_on.nodes;
@@ -1996,6 +2297,8 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
+            countermove_table: CounterMoveTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -2007,7 +2310,16 @@ mod tests {
         };
         for d in 1..=depth {
             ctx_off.pv_table.clear();
-            negamax(&mut pos_off, d, -INFINITY, INFINITY, 0, true, &mut ctx_off);
+            negamax(
+                &mut pos_off,
+                d,
+                -INFINITY,
+                INFINITY,
+                0,
+                true,
+                &mut ctx_off,
+                None,
+            );
             ctx_off.prev_pv = ctx_off.pv_table.extract_pv();
         }
         let nodes_off = ctx_off.nodes;
@@ -2035,6 +2347,8 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
+            countermove_table: CounterMoveTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -2053,6 +2367,7 @@ mod tests {
             0,
             true,
             &mut ctx_on,
+            None,
         );
         let nodes_on = ctx_on.nodes;
 
@@ -2064,6 +2379,8 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
+            countermove_table: CounterMoveTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -2082,6 +2399,7 @@ mod tests {
             0,
             true,
             &mut ctx_off,
+            None,
         );
         let nodes_off = ctx_off.nodes;
 
@@ -2107,6 +2425,8 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
+            countermove_table: CounterMoveTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -2131,6 +2451,7 @@ mod tests {
                 0,
                 true,
                 &mut ctx_on,
+                None,
             );
             let nodes_on = ctx_on.nodes;
 
@@ -2141,6 +2462,8 @@ mod tests {
                 nodes: 0,
                 aborted: false,
                 killers: KillerTable::new(),
+                history_table: HistoryTable::new(),
+                countermove_table: CounterMoveTable::new(),
                 pv_table: PvTable::new(),
                 prev_pv: Vec::new(),
                 stop_flag: None,
@@ -2159,6 +2482,7 @@ mod tests {
                 0,
                 true,
                 &mut ctx_off,
+                None,
             );
             let nodes_off = ctx_off.nodes;
 
@@ -2177,6 +2501,8 @@ mod tests {
                 nodes: 0,
                 aborted: false,
                 killers: KillerTable::new(),
+                history_table: HistoryTable::new(),
+                countermove_table: CounterMoveTable::new(),
                 pv_table: PvTable::new(),
                 prev_pv: Vec::new(),
                 stop_flag: None,
@@ -2195,6 +2521,7 @@ mod tests {
                 0,
                 true,
                 &mut ctx_on2,
+                None,
             );
             let nodes_on2 = ctx_on2.nodes;
 
@@ -2205,6 +2532,8 @@ mod tests {
                 nodes: 0,
                 aborted: false,
                 killers: KillerTable::new(),
+                history_table: HistoryTable::new(),
+                countermove_table: CounterMoveTable::new(),
                 pv_table: PvTable::new(),
                 prev_pv: Vec::new(),
                 stop_flag: None,
@@ -2223,6 +2552,7 @@ mod tests {
                 0,
                 true,
                 &mut ctx_off2,
+                None,
             );
             let nodes_off2 = ctx_off2.nodes;
 
@@ -2304,6 +2634,8 @@ mod tests {
                 nodes: 0,
                 aborted: false,
                 killers: KillerTable::new(),
+                history_table: HistoryTable::new(),
+                countermove_table: CounterMoveTable::new(),
                 pv_table: PvTable::new(),
                 prev_pv: Vec::new(),
                 stop_flag: None,
@@ -2318,7 +2650,16 @@ mod tests {
             let mut mv_on = None;
             for d in 1..=depth as u8 {
                 ctx_on.pv_table.clear();
-                let (_, mv) = negamax(&mut pos_on, d, -INFINITY, INFINITY, 0, true, &mut ctx_on);
+                let (_, mv) = negamax(
+                    &mut pos_on,
+                    d,
+                    -INFINITY,
+                    INFINITY,
+                    0,
+                    true,
+                    &mut ctx_on,
+                    None,
+                );
                 ctx_on.prev_pv = ctx_on.pv_table.extract_pv();
                 if mv.is_some() {
                     mv_on = mv;
@@ -2338,6 +2679,8 @@ mod tests {
                 nodes: 0,
                 aborted: false,
                 killers: KillerTable::new(),
+                history_table: HistoryTable::new(),
+                countermove_table: CounterMoveTable::new(),
                 pv_table: PvTable::new(),
                 prev_pv: Vec::new(),
                 stop_flag: None,
@@ -2352,7 +2695,16 @@ mod tests {
             let mut mv_off = None;
             for d in 1..=depth as u8 {
                 ctx_off.pv_table.clear();
-                let (_, mv) = negamax(&mut pos_off, d, -INFINITY, INFINITY, 0, true, &mut ctx_off);
+                let (_, mv) = negamax(
+                    &mut pos_off,
+                    d,
+                    -INFINITY,
+                    INFINITY,
+                    0,
+                    true,
+                    &mut ctx_off,
+                    None,
+                );
                 ctx_off.prev_pv = ctx_off.pv_table.extract_pv();
                 if mv.is_some() {
                     mv_off = mv;
@@ -2389,6 +2741,8 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
+            countermove_table: CounterMoveTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -2403,7 +2757,7 @@ mod tests {
         let mut best_all = None;
         for d in 1..=depth {
             ctx.pv_table.clear();
-            let (_, mv) = negamax(&mut pos, d, -INFINITY, INFINITY, 0, true, &mut ctx);
+            let (_, mv) = negamax(&mut pos, d, -INFINITY, INFINITY, 0, true, &mut ctx, None);
             ctx.prev_pv = ctx.pv_table.extract_pv();
             if mv.is_some() {
                 best_all = mv;
@@ -2424,6 +2778,8 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
+            countermove_table: CounterMoveTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -2438,7 +2794,7 @@ mod tests {
         let mut best_no_fut = None;
         for d in 1..=depth {
             ctx2.pv_table.clear();
-            let (_, mv) = negamax(&mut pos2, d, -INFINITY, INFINITY, 0, true, &mut ctx2);
+            let (_, mv) = negamax(&mut pos2, d, -INFINITY, INFINITY, 0, true, &mut ctx2, None);
             ctx2.prev_pv = ctx2.pv_table.extract_pv();
             if mv.is_some() {
                 best_no_fut = mv;
@@ -2457,6 +2813,8 @@ mod tests {
             nodes: 0,
             aborted: false,
             killers: KillerTable::new(),
+            history_table: HistoryTable::new(),
+            countermove_table: CounterMoveTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
             stop_flag: None,
@@ -2471,7 +2829,7 @@ mod tests {
         let mut best_no_lmr = None;
         for d in 1..=depth {
             ctx3.pv_table.clear();
-            let (_, mv) = negamax(&mut pos3, d, -INFINITY, INFINITY, 0, true, &mut ctx3);
+            let (_, mv) = negamax(&mut pos3, d, -INFINITY, INFINITY, 0, true, &mut ctx3, None);
             ctx3.prev_pv = ctx3.pv_table.extract_pv();
             if mv.is_some() {
                 best_no_lmr = mv;
@@ -2500,6 +2858,8 @@ mod tests {
                 nodes: 0,
                 aborted: false,
                 killers: KillerTable::new(),
+                history_table: HistoryTable::new(),
+                countermove_table: CounterMoveTable::new(),
                 pv_table: PvTable::new(),
                 prev_pv: Vec::new(),
                 stop_flag: None,
@@ -2515,7 +2875,16 @@ mod tests {
             let mut score_lmr = 0;
             for d in 1..=6u8 {
                 ctx_lmr.pv_table.clear();
-                let (s, mv) = negamax(&mut pos_lmr, d, -INFINITY, INFINITY, 0, true, &mut ctx_lmr);
+                let (s, mv) = negamax(
+                    &mut pos_lmr,
+                    d,
+                    -INFINITY,
+                    INFINITY,
+                    0,
+                    true,
+                    &mut ctx_lmr,
+                    None,
+                );
                 ctx_lmr.prev_pv = ctx_lmr.pv_table.extract_pv();
                 if mv.is_some() {
                     best_lmr = mv;
@@ -2531,6 +2900,8 @@ mod tests {
                 nodes: 0,
                 aborted: false,
                 killers: KillerTable::new(),
+                history_table: HistoryTable::new(),
+                countermove_table: CounterMoveTable::new(),
                 pv_table: PvTable::new(),
                 prev_pv: Vec::new(),
                 stop_flag: None,
@@ -2554,6 +2925,7 @@ mod tests {
                     0,
                     true,
                     &mut ctx_no_lmr,
+                    None,
                 );
                 ctx_no_lmr.prev_pv = ctx_no_lmr.pv_table.extract_pv();
                 if mv.is_some() {
