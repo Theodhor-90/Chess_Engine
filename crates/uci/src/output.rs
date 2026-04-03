@@ -114,6 +114,10 @@ pub fn option_string(name: &str, default: &str) -> String {
     format!("option name {name} type string default {default}")
 }
 
+pub fn option_spin(name: &str, default: i32, min: i32, max: i32) -> String {
+    format!("option name {name} type spin default {default} min {min} max {max}")
+}
+
 pub fn option_combo(name: &str, default: &str, vars: &[&str]) -> String {
     let var_str: String = vars.iter().map(|v| format!(" var {v}")).collect();
     format!("option name {name} type combo default {default}{var_str}")
@@ -275,6 +279,14 @@ mod tests {
         assert_eq!(
             option_string("BookFile", ""),
             "option name BookFile type string default "
+        );
+    }
+
+    #[test]
+    fn test_option_spin() {
+        assert_eq!(
+            option_spin("SyzygyProbeDepth", 6, 0, 7),
+            "option name SyzygyProbeDepth type spin default 6 min 0 max 7"
         );
     }
 

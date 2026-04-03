@@ -19,6 +19,8 @@ struct EngineState {
     ponder_params: Option<chess_uci::GoParams>,
     book: Option<chess_engine::book::PolyglotBook>,
     book_mode: chess_engine::book::BookMode,
+    syzygy_path: String,
+    syzygy_probe_depth: u8,
 }
 
 fn parse_uci_move(pos: &mut Position, move_str: &str) -> Option<Move> {
@@ -80,6 +82,8 @@ fn main() -> anyhow::Result<()> {
         ponder_params: None,
         book: None,
         book_mode: chess_engine::book::BookMode::BestMove,
+        syzygy_path: String::new(),
+        syzygy_probe_depth: 6,
     };
 
     let stdin = io::stdin();
@@ -102,6 +106,11 @@ fn main() -> anyhow::Result<()> {
                         "bestmove",
                         &["bestmove", "weighted"]
                     )
+                );
+                println!("{}", chess_uci::output::option_string("SyzygyPath", ""));
+                println!(
+                    "{}",
+                    chess_uci::output::option_spin("SyzygyProbeDepth", 6, 0, 7)
                 );
                 println!("{}", chess_uci::output::uciok());
                 io::stdout().flush().ok();
@@ -171,6 +180,24 @@ fn main() -> anyhow::Result<()> {
                                     state.book_mode = chess_engine::book::BookMode::Weighted
                                 }
                                 _ => {}
+                            }
+                        }
+                    }
+                    "syzygypath" => {
+                        if let Some(ref path) = value {
+                            if path.is_empty() {
+                                state.syzygy_path = String::new();
+                            } else {
+                                state.syzygy_path = path.clone();
+                            }
+                        } else {
+                            state.syzygy_path = String::new();
+                        }
+                    }
+                    "syzygyprobedepth" => {
+                        if let Some(ref val) = value {
+                            if let Ok(n) = val.parse::<u8>() {
+                                state.syzygy_probe_depth = n.min(7);
                             }
                         }
                     }
@@ -260,6 +287,15 @@ fn main() -> anyhow::Result<()> {
 
                 let mut search_pos = state.position.clone();
                 let game_history = state.game_history.clone();
+                let mut tb_prober: Option<chess_engine::syzygy::LazySyzygyTablebase> =
+                    if !state.syzygy_path.is_empty() {
+                        Some(chess_engine::syzygy::LazySyzygyTablebase::new(
+                            state.syzygy_path.clone(),
+                            state.syzygy_probe_depth,
+                        ))
+                    } else {
+                        None
+                    };
                 state.search_handle = Some(std::thread::spawn(move || {
                     let result = chess_search::search(
                         &mut search_pos,
@@ -284,6 +320,9 @@ fn main() -> anyhow::Result<()> {
                                 println!("{line}");
                             }
                         }),
+                        tb_prober
+                            .as_mut()
+                            .map(|t| t as &mut dyn chess_search::TbProber),
                     );
                     if let Some(mv) = result {
                         println!("{}", chess_uci::output::bestmove(mv, None));

@@ -22,6 +22,8 @@ use tt::{score_from_tt, score_to_tt, verification_key, BoundType, TranspositionT
 
 pub const MATE_SCORE: i32 = 30000;
 pub const INFINITY: i32 = 31000;
+pub const TB_WIN_SCORE: i32 = MATE_SCORE - 200;
+const TB_WIN_THRESHOLD: i32 = TB_WIN_SCORE / 2;
 const IID_MIN_DEPTH: i32 = 4;
 const MAX_PLY: i32 = 128;
 const FUTILITY_MARGINS: [i32; 4] = [0, 180, 360, 540];
@@ -30,6 +32,18 @@ const SINGULAR_MARGIN: i32 = 64;
 const SINGULAR_MIN_DEPTH: u8 = 6;
 const ASPIRATION_DELTA: i32 = 25;
 const ASPIRATION_WIDEN_FACTOR: i32 = 4;
+
+pub trait TbProber {
+    fn probe_wdl(&mut self, pos: &Position) -> Option<i32>;
+    fn probe_root(&mut self, pos: &Position) -> Option<(i32, i32)>;
+}
+
+fn reborrow_prober<'a>(prober: &'a mut Option<&mut dyn TbProber>) -> Option<&'a mut dyn TbProber> {
+    match prober {
+        Some(ref mut p) => Some(&mut **p),
+        None => None,
+    }
+}
 
 /// Callback invoked after each completed search depth: `(depth, score, nodes, elapsed, pv)`.
 pub type DepthCallback<'a> = &'a dyn Fn(u8, i32, u64, Duration, &[Move]);
@@ -185,6 +199,7 @@ pub fn negamax(
     ctx: &mut SearchContext,
     prev_move: Option<(PieceKind, Move)>,
     excluded_move: Option<Move>,
+    mut tb_prober: Option<&mut dyn TbProber>,
 ) -> (i32, Option<Move>) {
     ctx.nodes += 1;
     if ctx.nodes & 1023 == 0 {
@@ -209,6 +224,21 @@ pub fn negamax(
         for i in (start..ctx.history.len()).rev().skip(1).step_by(2) {
             if ctx.history[i] == current_hash {
                 return (0, None);
+            }
+        }
+    }
+
+    if ply > 0 {
+        if let Some(ref mut prober) = tb_prober {
+            if let Some(score) = prober.probe_wdl(pos) {
+                let adjusted = if score > TB_WIN_THRESHOLD {
+                    score - ply as i32
+                } else if score < -TB_WIN_THRESHOLD {
+                    score + ply as i32
+                } else {
+                    score
+                };
+                return (adjusted, None);
             }
         }
     }
@@ -286,6 +316,7 @@ pub fn negamax(
                     ctx,
                     prev_move,
                     Some(tt_mv),
+                    reborrow_prober(&mut tb_prober),
                 );
                 if !ctx.aborted && verify_score < s_beta {
                     depth = depth.saturating_add(1);
@@ -314,6 +345,7 @@ pub fn negamax(
             ctx,
             None,
             None,
+            reborrow_prober(&mut tb_prober),
         );
         let null_score = -null_score;
         ctx.history.pop();
@@ -369,6 +401,7 @@ pub fn negamax(
             ctx,
             prev_move,
             None,
+            reborrow_prober(&mut tb_prober),
         );
         if let Some(entry) = ctx.tt.probe(hash) {
             if let Some(iid_move) = entry.best_move() {
@@ -497,6 +530,7 @@ pub fn negamax(
                 ctx,
                 Some((piece_kind, mv)),
                 None,
+                reborrow_prober(&mut tb_prober),
             );
             score = -s;
 
@@ -512,6 +546,7 @@ pub fn negamax(
                     ctx,
                     Some((piece_kind, mv)),
                     None,
+                    reborrow_prober(&mut tb_prober),
                 );
                 score = -s2;
             }
@@ -528,6 +563,7 @@ pub fn negamax(
                     ctx,
                     Some((piece_kind, mv)),
                     None,
+                    reborrow_prober(&mut tb_prober),
                 );
                 score = -s3;
             }
@@ -543,6 +579,7 @@ pub fn negamax(
                 ctx,
                 Some((piece_kind, mv)),
                 None,
+                reborrow_prober(&mut tb_prober),
             );
             score = -s;
         } else {
@@ -557,6 +594,7 @@ pub fn negamax(
                 ctx,
                 Some((piece_kind, mv)),
                 None,
+                reborrow_prober(&mut tb_prober),
             );
             score = -s;
 
@@ -572,6 +610,7 @@ pub fn negamax(
                     ctx,
                     Some((piece_kind, mv)),
                     None,
+                    reborrow_prober(&mut tb_prober),
                 );
                 score = -s2;
             }
@@ -641,6 +680,7 @@ pub fn search(
     limits: SearchLimits,
     game_history: &[u64],
     on_depth: Option<DepthCallback<'_>>,
+    mut tb_prober: Option<&mut dyn TbProber>,
 ) -> Option<Move> {
     let mut ctx = SearchContext {
         start: Instant::now(),
@@ -666,9 +706,45 @@ pub fn search(
     ctx.tt.new_generation();
     ctx.history.push(pos.hash());
 
-    let mut best_move: Option<Move> = None;
+    // Root tablebase filtering
+    let mut tb_hint: Option<Move> = None;
+    if let Some(ref mut prober) = tb_prober {
+        let legal_moves = chess_movegen::generate_legal_moves(pos);
+        let mut probed: Vec<(Move, i32, i32)> = Vec::new();
+        let mut all_ok = true;
+        for mv in &legal_moves {
+            let undo = pos.make_move(*mv);
+            let result = prober.probe_root(pos);
+            pos.unmake_move(*mv, undo);
+            if let Some((wdl, dtz)) = result {
+                probed.push((*mv, -wdl, dtz));
+            } else {
+                all_ok = false;
+                break;
+            }
+        }
+        if all_ok && !probed.is_empty() {
+            let best_wdl = probed.iter().map(|(_, w, _)| *w).max().unwrap();
+            probed.retain(|(_, w, _)| *w == best_wdl);
+            if best_wdl > 0 {
+                probed.sort_by_key(|(_, _, dtz)| dtz.abs());
+            } else if best_wdl < 0 {
+                probed.sort_by_key(|(_, _, dtz)| std::cmp::Reverse(dtz.abs()));
+            }
+            if probed.len() == 1 {
+                return Some(probed[0].0);
+            }
+            tb_hint = Some(probed[0].0);
+        }
+    }
+
+    let mut best_move: Option<Move> = tb_hint;
     let mut depth: u8 = 1;
     let mut prev_score: i32 = 0;
+
+    if let Some(hint) = tb_hint {
+        ctx.prev_pv = vec![hint];
+    }
 
     loop {
         ctx.aborted = false;
@@ -683,7 +759,18 @@ pub fn search(
 
             loop {
                 ctx.pv_table.clear();
-                let (s, m) = negamax(pos, depth, alpha, beta, 0, true, &mut ctx, None, None);
+                let (s, m) = negamax(
+                    pos,
+                    depth,
+                    alpha,
+                    beta,
+                    0,
+                    true,
+                    &mut ctx,
+                    None,
+                    None,
+                    reborrow_prober(&mut tb_prober),
+                );
 
                 if ctx.aborted {
                     break (s, m);
@@ -711,7 +798,16 @@ pub fn search(
             }
         } else {
             negamax(
-                pos, depth, -INFINITY, INFINITY, 0, true, &mut ctx, None, None,
+                pos,
+                depth,
+                -INFINITY,
+                INFINITY,
+                0,
+                true,
+                &mut ctx,
+                None,
+                None,
+                reborrow_prober(&mut tb_prober),
             )
         };
 
@@ -785,7 +881,7 @@ mod tests {
                 .expect("valid fen");
         let mut ctx = test_ctx();
         let (score, mv) = negamax(
-            &mut pos, 1, -INFINITY, INFINITY, 0, true, &mut ctx, None, None,
+            &mut pos, 1, -INFINITY, INFINITY, 0, true, &mut ctx, None, None, None,
         );
         assert_eq!(score, -MATE_SCORE);
         assert!(mv.is_none());
@@ -798,7 +894,7 @@ mod tests {
                 .expect("valid fen");
         let mut ctx = test_ctx();
         let (score, mv) = negamax(
-            &mut pos, 1, -INFINITY, INFINITY, 0, true, &mut ctx, None, None,
+            &mut pos, 1, -INFINITY, INFINITY, 0, true, &mut ctx, None, None, None,
         );
         assert_eq!(score, -MATE_SCORE);
         assert!(mv.is_none());
@@ -809,7 +905,7 @@ mod tests {
         let mut pos = Position::from_fen("k7/1R6/K7/8/8/8/8/8 b - - 0 1").expect("valid fen");
         let mut ctx = test_ctx();
         let (score, mv) = negamax(
-            &mut pos, 1, -INFINITY, INFINITY, 0, true, &mut ctx, None, None,
+            &mut pos, 1, -INFINITY, INFINITY, 0, true, &mut ctx, None, None, None,
         );
         assert_eq!(score, 0);
         assert!(mv.is_none());
@@ -820,7 +916,7 @@ mod tests {
         let mut pos = Position::startpos();
         let mut ctx = test_ctx();
         let (_, mv) = negamax(
-            &mut pos, 1, -INFINITY, INFINITY, 0, true, &mut ctx, None, None,
+            &mut pos, 1, -INFINITY, INFINITY, 0, true, &mut ctx, None, None, None,
         );
         assert!(mv.is_some());
         let legal_moves = chess_movegen::generate_legal_moves(&mut pos);
@@ -833,7 +929,7 @@ mod tests {
         let mut pos = Position::from_fen("4k3/8/8/8/8/8/3q4/R3K3 w - - 0 1").expect("valid fen");
         let mut ctx = test_ctx();
         let (score, mv) = negamax(
-            &mut pos, 1, -INFINITY, INFINITY, 0, true, &mut ctx, None, None,
+            &mut pos, 1, -INFINITY, INFINITY, 0, true, &mut ctx, None, None, None,
         );
         assert!(score > 0);
         assert!(mv.is_some());
@@ -845,7 +941,7 @@ mod tests {
         let mut pos = Position::startpos();
         let mut ctx = test_ctx();
         let (_, mv) = negamax(
-            &mut pos, 3, -INFINITY, INFINITY, 0, true, &mut ctx, None, None,
+            &mut pos, 3, -INFINITY, INFINITY, 0, true, &mut ctx, None, None, None,
         );
         assert!(mv.is_some());
     }
@@ -872,7 +968,7 @@ mod tests {
         let mut pos = Position::from_fen("4k3/8/8/R2b4/8/8/8/4K3 w - - 0 1").expect("valid fen");
         let mut ctx = test_ctx();
         let (score, mv) = negamax(
-            &mut pos, 1, -INFINITY, INFINITY, 0, true, &mut ctx, None, None,
+            &mut pos, 1, -INFINITY, INFINITY, 0, true, &mut ctx, None, None, None,
         );
         assert!(score > 0);
         assert!(mv.is_some());
@@ -906,7 +1002,7 @@ mod tests {
             max_nodes: None,
             stop_flag: None,
         };
-        let mv = search(&mut pos, limits, &[], None);
+        let mv = search(&mut pos, limits, &[], None, None);
         assert!(mv.is_some());
         let legal_moves = chess_movegen::generate_legal_moves(&mut pos);
         assert!(legal_moves.iter().any(|&m| m == mv.unwrap()));
@@ -924,7 +1020,7 @@ mod tests {
             max_nodes: None,
             stop_flag: None,
         };
-        let mv = search(&mut pos, limits, &[], None);
+        let mv = search(&mut pos, limits, &[], None, None);
         assert!(mv.is_some());
         let best = mv.unwrap();
         assert_eq!(best.to_sq().index(), Square::new(53).unwrap().index());
@@ -940,7 +1036,7 @@ mod tests {
             max_nodes: None,
             stop_flag: None,
         };
-        let mv = search(&mut pos, limits, &[], None);
+        let mv = search(&mut pos, limits, &[], None, None);
         let elapsed = start.elapsed();
         assert!(elapsed < Duration::from_millis(200));
         assert!(mv.is_some());
@@ -957,7 +1053,7 @@ mod tests {
             max_nodes: None,
             stop_flag: None,
         };
-        let mv = search(&mut pos, limits, &[], None);
+        let mv = search(&mut pos, limits, &[], None, None);
         assert!(mv.is_none());
     }
 
@@ -970,7 +1066,7 @@ mod tests {
             max_nodes: None,
             stop_flag: None,
         };
-        let mv = search(&mut pos, limits, &[], None);
+        let mv = search(&mut pos, limits, &[], None, None);
         assert!(mv.is_none());
     }
 
@@ -979,7 +1075,7 @@ mod tests {
         let mut pos = Position::startpos();
         let mut ctx = test_ctx();
         negamax(
-            &mut pos, 2, -INFINITY, INFINITY, 0, true, &mut ctx, None, None,
+            &mut pos, 2, -INFINITY, INFINITY, 0, true, &mut ctx, None, None, None,
         );
         assert!(ctx.nodes > 0);
     }
@@ -1024,6 +1120,7 @@ mod tests {
                 &mut ctx_pv,
                 None,
                 None,
+                None,
             );
             ctx_pv.prev_pv = ctx_pv.pv_table.extract_pv();
         }
@@ -1064,6 +1161,7 @@ mod tests {
                 &mut ctx_no_pv,
                 None,
                 None,
+                None,
             );
             // Intentionally do NOT set prev_pv
         }
@@ -1098,7 +1196,7 @@ mod tests {
             max_nodes: None,
             stop_flag: Some(stop),
         };
-        let mv = search(&mut pos, limits, &[], None);
+        let mv = search(&mut pos, limits, &[], None, None);
         let elapsed = start.elapsed();
 
         assert!(
@@ -1129,7 +1227,7 @@ mod tests {
         let cb = move |depth: u8, _score: i32, _nodes: u64, _elapsed: Duration, _pv: &[Move]| {
             max_depth_clone.fetch_max(depth, Ordering::Relaxed);
         };
-        let mv = search(&mut pos, limits, &[], Some(&cb));
+        let mv = search(&mut pos, limits, &[], Some(&cb), None);
         assert!(mv.is_some());
         assert_eq!(max_depth_seen.load(Ordering::Relaxed), 3);
     }
@@ -1144,7 +1242,7 @@ mod tests {
             max_nodes: Some(500),
             stop_flag: None,
         };
-        let mv = search(&mut pos, limits, &[], None);
+        let mv = search(&mut pos, limits, &[], None, None);
         let elapsed = start.elapsed();
         assert!(mv.is_some());
         assert!(
@@ -1164,7 +1262,7 @@ mod tests {
             max_nodes: None,
             stop_flag: None,
         };
-        let mv = search(&mut pos, limits, &[], None);
+        let mv = search(&mut pos, limits, &[], None, None);
         let elapsed = start.elapsed();
         assert!(mv.is_some());
         assert!(
@@ -1214,6 +1312,7 @@ mod tests {
                 &mut ctx_tt,
                 None,
                 None,
+                None,
             );
             ctx_tt.prev_pv = ctx_tt.pv_table.extract_pv();
         }
@@ -1251,6 +1350,7 @@ mod tests {
                 0,
                 true,
                 &mut ctx_no_tt,
+                None,
                 None,
                 None,
             );
@@ -1297,7 +1397,7 @@ mod tests {
         for d in 1..=4u8 {
             ctx.pv_table.clear();
             negamax(
-                &mut pos, d, -INFINITY, INFINITY, 0, true, &mut ctx, None, None,
+                &mut pos, d, -INFINITY, INFINITY, 0, true, &mut ctx, None, None, None,
             );
             ctx.prev_pv = ctx.pv_table.extract_pv();
         }
@@ -1356,7 +1456,7 @@ mod tests {
         };
         ctx.tt.new_generation();
         let (score, mv) = negamax(
-            &mut pos, 4, -INFINITY, INFINITY, 0, true, &mut ctx, None, None,
+            &mut pos, 4, -INFINITY, INFINITY, 0, true, &mut ctx, None, None, None,
         );
 
         assert!(mv.is_some(), "should find a mating move");
@@ -1408,7 +1508,7 @@ mod tests {
             for d in 1..=4u8 {
                 ctx.pv_table.clear();
                 negamax(
-                    &mut pos, d, -INFINITY, INFINITY, 0, true, &mut ctx, None, None,
+                    &mut pos, d, -INFINITY, INFINITY, 0, true, &mut ctx, None, None, None,
                 );
                 ctx.prev_pv = ctx.pv_table.extract_pv();
             }
@@ -1496,7 +1596,7 @@ mod tests {
 
         // Run negamax — should not crash and should return a valid move
         let (score, mv) = negamax(
-            &mut pos, 3, -INFINITY, INFINITY, 0, true, &mut ctx, None, None,
+            &mut pos, 3, -INFINITY, INFINITY, 0, true, &mut ctx, None, None, None,
         );
         assert!(mv.is_some(), "negamax should return a valid move");
         let best = mv.unwrap();
@@ -1547,6 +1647,7 @@ mod tests {
                 &mut ctx_tt,
                 None,
                 None,
+                None,
             );
             ctx_tt.prev_pv = ctx_tt.pv_table.extract_pv();
         }
@@ -1584,6 +1685,7 @@ mod tests {
                 0,
                 true,
                 &mut ctx_no_tt,
+                None,
                 None,
                 None,
             );
@@ -1639,6 +1741,7 @@ mod tests {
                 &mut ctx_iid,
                 None,
                 None,
+                None,
             );
             ctx_iid.prev_pv = ctx_iid.pv_table.extract_pv();
         }
@@ -1676,6 +1779,7 @@ mod tests {
                 0,
                 true,
                 &mut ctx_no_iid,
+                None,
                 None,
                 None,
             );
@@ -1741,10 +1845,10 @@ mod tests {
         ctx_b.tt.new_generation();
 
         negamax(
-            &mut pos_a, 3, -INFINITY, INFINITY, 0, true, &mut ctx_a, None, None,
+            &mut pos_a, 3, -INFINITY, INFINITY, 0, true, &mut ctx_a, None, None, None,
         );
         negamax(
-            &mut pos_b, 3, -INFINITY, INFINITY, 0, true, &mut ctx_b, None, None,
+            &mut pos_b, 3, -INFINITY, INFINITY, 0, true, &mut ctx_b, None, None, None,
         );
 
         assert_eq!(
@@ -1783,7 +1887,7 @@ mod tests {
         ctx.tt.new_generation();
 
         let (_, mv) = negamax(
-            &mut pos, 5, -INFINITY, INFINITY, 0, true, &mut ctx, None, None,
+            &mut pos, 5, -INFINITY, INFINITY, 0, true, &mut ctx, None, None, None,
         );
 
         let entry = ctx
@@ -1830,7 +1934,7 @@ mod tests {
 
         // At ply=1, the repetition check sees current_hash in history and returns (0, None)
         let (score, mv) = negamax(
-            &mut pos, 4, -INFINITY, INFINITY, 1, true, &mut ctx, None, None,
+            &mut pos, 4, -INFINITY, INFINITY, 1, true, &mut ctx, None, None, None,
         );
 
         assert_eq!(score, 0, "threefold repetition should yield draw score 0");
@@ -1847,7 +1951,7 @@ mod tests {
         ctx.tt.new_generation();
 
         let (score, _) = negamax(
-            &mut pos, 2, -INFINITY, INFINITY, 0, true, &mut ctx, None, None,
+            &mut pos, 2, -INFINITY, INFINITY, 0, true, &mut ctx, None, None, None,
         );
 
         assert_eq!(
@@ -1875,7 +1979,7 @@ mod tests {
             max_nodes: None,
             stop_flag: None,
         };
-        let mv = search(&mut pos, limits, &game_history, None);
+        let mv = search(&mut pos, limits, &game_history, None, None);
 
         assert!(mv.is_some(), "engine should find a move");
         // Re-search to get the score
@@ -1910,7 +2014,7 @@ mod tests {
         ctx.history.push(pos2.hash());
 
         let (score, _) = negamax(
-            &mut pos2, 4, -INFINITY, INFINITY, 0, true, &mut ctx, None, None,
+            &mut pos2, 4, -INFINITY, INFINITY, 0, true, &mut ctx, None, None, None,
         );
 
         assert!(
@@ -1969,7 +2073,7 @@ mod tests {
         ctx.tt.new_generation();
 
         let (score_with_history, _) = negamax(
-            &mut pos, 4, -INFINITY, INFINITY, 0, true, &mut ctx, None, None,
+            &mut pos, 4, -INFINITY, INFINITY, 0, true, &mut ctx, None, None, None,
         );
 
         // Search without repetition history for comparison
@@ -1997,7 +2101,7 @@ mod tests {
         ctx2.tt.new_generation();
 
         let (score_without_history, _) = negamax(
-            &mut pos2, 4, -INFINITY, INFINITY, 0, true, &mut ctx2, None, None,
+            &mut pos2, 4, -INFINITY, INFINITY, 0, true, &mut ctx2, None, None, None,
         );
 
         // With repetition available, the losing side should get a better (higher) score
@@ -2054,6 +2158,7 @@ mod tests {
             &mut ctx_nmp,
             None,
             None,
+            None,
         );
         let nodes_with_nmp = ctx_nmp.nodes;
 
@@ -2088,6 +2193,7 @@ mod tests {
             1,
             false,
             &mut ctx_no_nmp,
+            None,
             None,
             None,
         );
@@ -2132,7 +2238,7 @@ mod tests {
         };
         ctx_a.tt.new_generation();
         negamax(
-            &mut pos_a, depth, -INFINITY, INFINITY, 0, true, &mut ctx_a, None, None,
+            &mut pos_a, depth, -INFINITY, INFINITY, 0, true, &mut ctx_a, None, None, None,
         );
         let nodes_allow = ctx_a.nodes;
 
@@ -2159,7 +2265,7 @@ mod tests {
         };
         ctx_b.tt.new_generation();
         negamax(
-            &mut pos_b, depth, -INFINITY, INFINITY, 0, false, &mut ctx_b, None, None,
+            &mut pos_b, depth, -INFINITY, INFINITY, 0, false, &mut ctx_b, None, None, None,
         );
         let nodes_disallow = ctx_b.nodes;
 
@@ -2200,7 +2306,7 @@ mod tests {
         };
         ctx_a.tt.new_generation();
         negamax(
-            &mut pos_a, depth, -INFINITY, INFINITY, 0, true, &mut ctx_a, None, None,
+            &mut pos_a, depth, -INFINITY, INFINITY, 0, true, &mut ctx_a, None, None, None,
         );
         let nodes_allow = ctx_a.nodes;
 
@@ -2227,7 +2333,7 @@ mod tests {
         };
         ctx_b.tt.new_generation();
         negamax(
-            &mut pos_b, depth, -INFINITY, INFINITY, 0, false, &mut ctx_b, None, None,
+            &mut pos_b, depth, -INFINITY, INFINITY, 0, false, &mut ctx_b, None, None, None,
         );
         let nodes_disallow = ctx_b.nodes;
 
@@ -2268,7 +2374,7 @@ mod tests {
         };
         ctx_a.tt.new_generation();
         negamax(
-            &mut pos_a, depth, -INFINITY, INFINITY, 0, false, &mut ctx_a, None, None,
+            &mut pos_a, depth, -INFINITY, INFINITY, 0, false, &mut ctx_a, None, None, None,
         );
         let nodes_no_null_a = ctx_a.nodes;
 
@@ -2295,7 +2401,7 @@ mod tests {
         };
         ctx_b.tt.new_generation();
         negamax(
-            &mut pos_b, depth, -INFINITY, INFINITY, 0, false, &mut ctx_b, None, None,
+            &mut pos_b, depth, -INFINITY, INFINITY, 0, false, &mut ctx_b, None, None, None,
         );
         let nodes_no_null_b = ctx_b.nodes;
 
@@ -2327,7 +2433,7 @@ mod tests {
                 max_nodes: None,
                 stop_flag: None,
             };
-            let mv = search(&mut pos, limits, &[], None);
+            let mv = search(&mut pos, limits, &[], None, None);
             assert!(mv.is_some(), "should find a move for FEN: {}", fen);
             assert_eq!(
                 mv.unwrap().to_sq(),
@@ -2402,6 +2508,7 @@ mod tests {
                     &mut ctx_lmr,
                     None,
                     None,
+                    None,
                 );
                 ctx_lmr.prev_pv = ctx_lmr.pv_table.extract_pv();
             }
@@ -2442,6 +2549,7 @@ mod tests {
                     &mut ctx_no_lmr,
                     None,
                     None,
+                    None,
                 );
                 ctx_no_lmr.prev_pv = ctx_no_lmr.pv_table.extract_pv();
             }
@@ -2478,7 +2586,7 @@ mod tests {
                 max_nodes: None,
                 stop_flag: None,
             };
-            let mv_lmr = search(&mut pos_lmr, limits_lmr, &[], None);
+            let mv_lmr = search(&mut pos_lmr, limits_lmr, &[], None, None);
 
             let mut pos_no_lmr = Position::from_fen(fen).expect("valid fen");
             let mut ctx_no_lmr = SearchContext {
@@ -2514,6 +2622,7 @@ mod tests {
                     0,
                     true,
                     &mut ctx_no_lmr,
+                    None,
                     None,
                     None,
                 );
@@ -2595,6 +2704,7 @@ mod tests {
                 &mut ctx_on,
                 None,
                 None,
+                None,
             );
             ctx_on.prev_pv = ctx_on.pv_table.extract_pv();
         }
@@ -2632,6 +2742,7 @@ mod tests {
                 0,
                 true,
                 &mut ctx_off,
+                None,
                 None,
                 None,
             );
@@ -2687,6 +2798,7 @@ mod tests {
             &mut ctx_on,
             None,
             None,
+            None,
         );
         let nodes_on = ctx_on.nodes;
 
@@ -2721,6 +2833,7 @@ mod tests {
             0,
             true,
             &mut ctx_off,
+            None,
             None,
             None,
         );
@@ -2779,6 +2892,7 @@ mod tests {
                 &mut ctx_on,
                 None,
                 None,
+                None,
             );
             let nodes_on = ctx_on.nodes;
 
@@ -2812,6 +2926,7 @@ mod tests {
                 0,
                 true,
                 &mut ctx_off,
+                None,
                 None,
                 None,
             );
@@ -2857,6 +2972,7 @@ mod tests {
                 &mut ctx_on2,
                 None,
                 None,
+                None,
             );
             let nodes_on2 = ctx_on2.nodes;
 
@@ -2892,6 +3008,7 @@ mod tests {
                 &mut ctx_off2,
                 None,
                 None,
+                None,
             );
             let nodes_off2 = ctx_off2.nodes;
 
@@ -2925,7 +3042,7 @@ mod tests {
                 max_nodes: None,
                 stop_flag: None,
             };
-            let mv = search(&mut pos, limits, &[], None);
+            let mv = search(&mut pos, limits, &[], None, None);
             assert!(mv.is_some(), "should find a move for FEN: {}", fen);
             assert_eq!(
                 mv.unwrap().to_sq(),
@@ -3002,6 +3119,7 @@ mod tests {
                     &mut ctx_on,
                     None,
                     None,
+                    None,
                 );
                 ctx_on.prev_pv = ctx_on.pv_table.extract_pv();
                 if mv.is_some() {
@@ -3049,6 +3167,7 @@ mod tests {
                     0,
                     true,
                     &mut ctx_off,
+                    None,
                     None,
                     None,
                 );
@@ -3108,7 +3227,7 @@ mod tests {
         for d in 1..=depth {
             ctx.pv_table.clear();
             let (_, mv) = negamax(
-                &mut pos, d, -INFINITY, INFINITY, 0, true, &mut ctx, None, None,
+                &mut pos, d, -INFINITY, INFINITY, 0, true, &mut ctx, None, None, None,
             );
             ctx.prev_pv = ctx.pv_table.extract_pv();
             if mv.is_some() {
@@ -3150,7 +3269,7 @@ mod tests {
         for d in 1..=depth {
             ctx2.pv_table.clear();
             let (_, mv) = negamax(
-                &mut pos2, d, -INFINITY, INFINITY, 0, true, &mut ctx2, None, None,
+                &mut pos2, d, -INFINITY, INFINITY, 0, true, &mut ctx2, None, None, None,
             );
             ctx2.prev_pv = ctx2.pv_table.extract_pv();
             if mv.is_some() {
@@ -3190,7 +3309,7 @@ mod tests {
         for d in 1..=depth {
             ctx3.pv_table.clear();
             let (_, mv) = negamax(
-                &mut pos3, d, -INFINITY, INFINITY, 0, true, &mut ctx3, None, None,
+                &mut pos3, d, -INFINITY, INFINITY, 0, true, &mut ctx3, None, None, None,
             );
             ctx3.prev_pv = ctx3.pv_table.extract_pv();
             if mv.is_some() {
@@ -3250,6 +3369,7 @@ mod tests {
                     &mut ctx_lmr,
                     None,
                     None,
+                    None,
                 );
                 ctx_lmr.prev_pv = ctx_lmr.pv_table.extract_pv();
                 if mv.is_some() {
@@ -3294,6 +3414,7 @@ mod tests {
                     0,
                     true,
                     &mut ctx_no_lmr,
+                    None,
                     None,
                     None,
                 );
@@ -3354,6 +3475,7 @@ mod tests {
             &mut ctx_on,
             None,
             None,
+            None,
         );
         let nodes_on = ctx_on.nodes;
 
@@ -3387,6 +3509,7 @@ mod tests {
             0,
             true,
             &mut ctx_off,
+            None,
             None,
             None,
         );
@@ -3434,6 +3557,7 @@ mod tests {
             &mut ctx_on,
             None,
             None,
+            None,
         );
         let nodes_on = ctx_on.nodes;
 
@@ -3467,6 +3591,7 @@ mod tests {
             0,
             true,
             &mut ctx_off,
+            None,
             None,
             None,
         );
@@ -3538,6 +3663,7 @@ mod tests {
                     &mut ctx_on,
                     None,
                     None,
+                    None,
                 );
                 ctx_on.prev_pv = ctx_on.pv_table.extract_pv();
                 if mv.is_some() {
@@ -3584,6 +3710,7 @@ mod tests {
                     0,
                     true,
                     &mut ctx_off,
+                    None,
                     None,
                     None,
                 );
@@ -3656,7 +3783,7 @@ mod tests {
             for d in 1..=depth {
                 ctx.pv_table.clear();
                 let (_, mv) = negamax(
-                    &mut pos, d, -INFINITY, INFINITY, 0, true, &mut ctx, None, None,
+                    &mut pos, d, -INFINITY, INFINITY, 0, true, &mut ctx, None, None, None,
                 );
                 ctx.prev_pv = ctx.pv_table.extract_pv();
                 if mv.is_some() {
@@ -3716,7 +3843,7 @@ mod tests {
             for d in 1..=depth {
                 ctx.pv_table.clear();
                 negamax(
-                    &mut pos, d, -INFINITY, INFINITY, 0, true, &mut ctx, None, None,
+                    &mut pos, d, -INFINITY, INFINITY, 0, true, &mut ctx, None, None, None,
                 );
                 ctx.prev_pv = ctx.pv_table.extract_pv();
             }
@@ -3783,6 +3910,7 @@ mod tests {
                     &mut ctx_lmr,
                     None,
                     None,
+                    None,
                 );
                 ctx_lmr.prev_pv = ctx_lmr.pv_table.extract_pv();
                 if mv.is_some() {
@@ -3825,6 +3953,7 @@ mod tests {
                     0,
                     true,
                     &mut ctx_no_lmr,
+                    None,
                     None,
                     None,
                 );
