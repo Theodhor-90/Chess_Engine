@@ -1,0 +1,3 @@
+- **`Cargo.toml`** — added `"crates/engine"` to workspace `members` (critical: engine crate was unbuildable)
+- **`crates/search/src/lib.rs`** — added `pub type DepthCallback<'a>` alias; changed `on_depth` parameter from inline `&dyn Fn(…)` to `Option<DepthCallback<'_>>` (major: Clippy `type_complexity` lint)
+- **`crates/engine/src/main.rs`** — removed unnecessary `as i32` casts in `score_to_uci`; fixed `rustfmt` line-wrapping on `Square::from_file_rank` calls

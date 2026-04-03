@@ -2,6 +2,8 @@ pub mod killer;
 pub mod ordering;
 pub mod pv_table;
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use chess_board::Position;
@@ -13,6 +15,9 @@ use pv_table::PvTable;
 pub const MATE_SCORE: i32 = 30000;
 pub const INFINITY: i32 = 31000;
 
+/// Callback invoked after each completed search depth: `(depth, score, nodes, elapsed, pv)`.
+pub type DepthCallback<'a> = &'a dyn Fn(u8, i32, u64, Duration, &[Move]);
+
 pub struct SearchContext {
     start: Instant,
     time_budget: Duration,
@@ -21,12 +26,18 @@ pub struct SearchContext {
     killers: KillerTable,
     pv_table: PvTable,
     prev_pv: Vec<Move>,
+    stop_flag: Option<Arc<AtomicBool>>,
 }
 
 impl SearchContext {
     fn check_time(&mut self) {
         if self.start.elapsed() >= self.time_budget {
             self.aborted = true;
+        }
+        if let Some(ref flag) = self.stop_flag {
+            if flag.load(Ordering::Relaxed) {
+                self.aborted = true;
+            }
         }
     }
 
@@ -159,7 +170,12 @@ pub fn negamax(
     (alpha, best_move)
 }
 
-pub fn search(pos: &mut Position, time_budget: Duration) -> Option<Move> {
+pub fn search(
+    pos: &mut Position,
+    time_budget: Duration,
+    stop_flag: Option<Arc<AtomicBool>>,
+    on_depth: Option<DepthCallback<'_>>,
+) -> Option<Move> {
     let mut ctx = SearchContext {
         start: Instant::now(),
         time_budget,
@@ -168,6 +184,7 @@ pub fn search(pos: &mut Position, time_budget: Duration) -> Option<Move> {
         killers: KillerTable::new(),
         pv_table: PvTable::new(),
         prev_pv: Vec::new(),
+        stop_flag,
     };
 
     let mut best_move: Option<Move> = None;
@@ -187,6 +204,10 @@ pub fn search(pos: &mut Position, time_budget: Duration) -> Option<Move> {
         }
 
         ctx.prev_pv = ctx.pv_table.extract_pv();
+
+        if let Some(ref cb) = on_depth {
+            cb(depth, score, ctx.nodes, ctx.start.elapsed(), &ctx.prev_pv);
+        }
 
         if score.abs() >= MATE_SCORE - 100 {
             break;
@@ -216,6 +237,7 @@ mod tests {
             killers: KillerTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
+            stop_flag: None,
         }
     }
 
@@ -327,7 +349,7 @@ mod tests {
     #[test]
     fn iterative_deepening_returns_legal_move() {
         let mut pos = Position::startpos();
-        let mv = search(&mut pos, Duration::from_secs(5));
+        let mv = search(&mut pos, Duration::from_secs(5), None, None);
         assert!(mv.is_some());
         let legal_moves = chess_movegen::generate_legal_moves(&mut pos);
         assert!(legal_moves.iter().any(|&m| m == mv.unwrap()));
@@ -339,7 +361,7 @@ mod tests {
             "r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4",
         )
         .expect("valid fen");
-        let mv = search(&mut pos, Duration::from_secs(5));
+        let mv = search(&mut pos, Duration::from_secs(5), None, None);
         assert!(mv.is_some());
         let best = mv.unwrap();
         assert_eq!(best.to_sq().index(), Square::new(53).unwrap().index());
@@ -349,7 +371,7 @@ mod tests {
     fn search_respects_time_budget() {
         let mut pos = Position::startpos();
         let start = Instant::now();
-        let mv = search(&mut pos, Duration::from_millis(50));
+        let mv = search(&mut pos, Duration::from_millis(50), None, None);
         let elapsed = start.elapsed();
         assert!(elapsed < Duration::from_millis(200));
         assert!(mv.is_some());
@@ -360,14 +382,14 @@ mod tests {
         let mut pos =
             Position::from_fen("rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3")
                 .expect("valid fen");
-        let mv = search(&mut pos, Duration::from_secs(5));
+        let mv = search(&mut pos, Duration::from_secs(5), None, None);
         assert!(mv.is_none());
     }
 
     #[test]
     fn search_returns_none_for_stalemate() {
         let mut pos = Position::from_fen("k7/1R6/K7/8/8/8/8/8 b - - 0 1").expect("valid fen");
-        let mv = search(&mut pos, Duration::from_secs(5));
+        let mv = search(&mut pos, Duration::from_secs(5), None, None);
         assert!(mv.is_none());
     }
 
@@ -394,6 +416,7 @@ mod tests {
             killers: KillerTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
+            stop_flag: None,
         };
         // Run iterative deepening up to target depth to build PV
         for d in 1..=depth {
@@ -413,6 +436,7 @@ mod tests {
             killers: KillerTable::new(),
             pv_table: PvTable::new(),
             prev_pv: Vec::new(),
+            stop_flag: None,
         };
         // Run iterative deepening but never set prev_pv
         for d in 1..=depth {
@@ -427,6 +451,35 @@ mod tests {
             "PV ordering should reduce nodes: {} (with PV) vs {} (without PV)",
             nodes_with_pv,
             nodes_without_pv
+        );
+    }
+
+    #[test]
+    fn test_stop_flag_aborts_search() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_clone = Arc::clone(&stop);
+
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            stop_clone.store(true, Ordering::Relaxed);
+        });
+
+        let mut pos = Position::startpos();
+        let start = Instant::now();
+        let mv = search(&mut pos, Duration::from_secs(60), Some(stop), None);
+        let elapsed = start.elapsed();
+
+        assert!(
+            elapsed < Duration::from_millis(500),
+            "search should abort within 500ms, took {:?}",
+            elapsed
+        );
+        assert!(
+            mv.is_some(),
+            "search should find at least one move before being stopped"
         );
     }
 }

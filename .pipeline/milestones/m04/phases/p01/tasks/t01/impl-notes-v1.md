@@ -1,0 +1,3 @@
+- **`crates/uci/Cargo.toml`** — Created. New crate manifest for `chess-uci` with `thiserror = "2"` dependency, `edition.workspace = true`.
+- **`crates/uci/src/lib.rs`** — Created. Contains `UciError` enum (4 variants), `GoParams` struct (10 fields), `UciCommand` enum (7 variants), `parse_position` helper, `parse_go` helper with `parse_go_value` generic helper, public `parse` function, and 22 unit tests covering all command variants and error cases.
+- **`Cargo.toml`** (workspace root) — Modified. Added `"crates/uci"` to workspace members list.

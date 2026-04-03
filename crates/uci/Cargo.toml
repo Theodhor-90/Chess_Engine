@@ -1,0 +1,8 @@
+[package]
+name = "chess-uci"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+chess-types = { path = "../types" }
+thiserror = "2"

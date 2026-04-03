@@ -1,0 +1,16 @@
+[package]
+name = "engine"
+version = "0.1.0"
+edition.workspace = true
+
+[[bin]]
+name = "engine"
+path = "src/main.rs"
+
+[dependencies]
+chess-uci = { path = "../uci" }
+chess-search = { path = "../search" }
+chess-movegen = { path = "../movegen" }
+chess-board = { path = "../board" }
+chess-types = { path = "../types" }
+anyhow = "1"

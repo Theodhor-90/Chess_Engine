@@ -1,0 +1,3 @@
+- **`crates/uci/Cargo.toml`** — Modified: added `chess-types = { path = "../types" }` dependency
+- **`crates/uci/src/output.rs`** — Created: `Score` enum (`Cp`, `Mate`), `InfoFields` struct with builder pattern and `to_uci_string()`, free functions `id_name`, `id_author`, `uciok`, `readyok`, `bestmove`, and 17 unit tests
+- **`crates/uci/src/lib.rs`** — Modified: added `pub mod output;` declaration before existing code
