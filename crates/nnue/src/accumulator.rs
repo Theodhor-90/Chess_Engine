@@ -7,64 +7,46 @@ use crate::inference::forward;
 use crate::network::Network;
 use crate::simd;
 
-/// Stores the incrementally updatable state for hidden layer 1.
-///
-/// Each perspective (white and black) has its own accumulator vector of `L1_SIZE`
-/// elements. The accumulator is designed to support incremental updates: features
-/// can be added or removed without full recomputation.
 #[derive(Clone)]
 pub struct Accumulator {
-    /// White perspective accumulator values (L1_SIZE elements).
-    pub white: [i16; L1_SIZE],
-    /// Black perspective accumulator values (L1_SIZE elements).
-    pub black: [i16; L1_SIZE],
+    pub white: Vec<i16>,
+    pub black: Vec<i16>,
 }
 
 impl Accumulator {
-    /// Creates a zeroed accumulator.
-    pub fn new() -> Self {
+    pub fn new(l1_size: usize) -> Self {
         Self {
-            white: [0; L1_SIZE],
-            black: [0; L1_SIZE],
+            white: vec![0; l1_size],
+            black: vec![0; l1_size],
         }
     }
 
-    /// Sets both perspectives to the bias values (used when refreshing from scratch).
-    pub fn init_from_bias(&mut self, bias: &[i16; L1_SIZE]) {
-        self.white = *bias;
-        self.black = *bias;
+    pub fn init_from_bias(&mut self, bias: &[i16]) {
+        debug_assert_eq!(bias.len(), self.white.len());
+        self.white.copy_from_slice(bias);
+        self.black.copy_from_slice(bias);
     }
 
-    /// Adds the weight column at `index` to the given perspective's accumulator.
-    ///
-    /// For each `i in 0..L1_SIZE`, adds `weights[index * L1_SIZE + i]` to the
-    /// perspective's accumulator value at position `i`.
     pub fn add_feature(&mut self, perspective: Color, index: usize, weights: &[i16]) {
+        let l1_size = self.white.len();
         let vals = match perspective {
             Color::White => &mut self.white,
             Color::Black => &mut self.black,
         };
-        let offset = index * L1_SIZE;
-        simd::vec_add_i16(vals, &weights[offset..offset + L1_SIZE]);
+        let offset = index * l1_size;
+        simd::vec_add_i16(vals, &weights[offset..offset + l1_size]);
     }
 
-    /// Subtracts the weight column at `index` from the given perspective's accumulator.
-    ///
-    /// For each `i in 0..L1_SIZE`, subtracts `weights[index * L1_SIZE + i]` from the
-    /// perspective's accumulator value at position `i`.
     pub fn remove_feature(&mut self, perspective: Color, index: usize, weights: &[i16]) {
+        let l1_size = self.white.len();
         let vals = match perspective {
             Color::White => &mut self.white,
             Color::Black => &mut self.black,
         };
-        let offset = index * L1_SIZE;
-        simd::vec_sub_i16(vals, &weights[offset..offset + L1_SIZE]);
+        let offset = index * l1_size;
+        simd::vec_sub_i16(vals, &weights[offset..offset + l1_size]);
     }
 
-    /// Initializes the accumulator from a full position.
-    ///
-    /// Sets both perspectives to the L1 bias, then iterates all non-king pieces
-    /// on the board and adds their corresponding HalfKP feature weight columns.
     pub fn refresh(&mut self, pos: &Position, network: &Network) {
         self.init_from_bias(&network.input_bias);
 
@@ -99,7 +81,7 @@ impl Accumulator {
 
 impl Default for Accumulator {
     fn default() -> Self {
-        Self::new()
+        Self::new(L1_SIZE)
     }
 }
 
@@ -110,9 +92,9 @@ pub struct AccumulatorState {
 }
 
 impl AccumulatorState {
-    pub fn new() -> Self {
+    pub fn new(l1_size: usize) -> Self {
         Self {
-            acc: Accumulator::new(),
+            acc: Accumulator::new(l1_size),
             dirty: [false; 2],
             king_moved: false,
         }
@@ -145,7 +127,7 @@ impl AccumulatorState {
 
 impl Default for AccumulatorState {
     fn default() -> Self {
-        Self::new()
+        Self::new(L1_SIZE)
     }
 }
 
@@ -165,14 +147,10 @@ fn compute_and_apply_deltas(
     captured: Option<Piece>,
     network: &Network,
 ) {
-    // pos is the position AFTER make_move, so side_to_move is the opponent of the moving side
     let moving_side = pos.side_to_move().opposite();
     let from = mv.from_sq();
     let to = mv.to_sq();
 
-    // Determine the moving piece kind. After make_move, the piece is at `to` (unless promotion,
-    // where it changed kind). For promotion moves, the piece at `to` is the promoted piece,
-    // but the original piece was a pawn.
     let is_promotion = mv.is_promotion();
     let is_castling = mv.is_castling();
     let is_en_passant = mv.is_en_passant();
@@ -184,23 +162,19 @@ fn compute_and_apply_deltas(
         piece_at_to.kind
     };
 
-    // If king moved, mark for full refresh
     if moving_kind == PieceKind::King || is_castling {
         state.mark_king_moved();
         return;
     }
 
-    // For non-king moves, apply incremental deltas for each perspective
     for perspective in [Color::White, Color::Black] {
         let king_sq = king_sq_for(pos, perspective);
 
-        // Remove feature at from_sq for the original piece
         let remove_idx = feature_index(king_sq, from, moving_kind, moving_side);
         state
             .acc
             .remove_feature(perspective, remove_idx, &network.input_weights);
 
-        // Add feature at to_sq for the piece (or promoted piece)
         let add_kind = if is_promotion {
             piece_at_to.kind
         } else {
@@ -211,10 +185,8 @@ fn compute_and_apply_deltas(
             .acc
             .add_feature(perspective, add_idx, &network.input_weights);
 
-        // Handle captured piece
         if let Some(cap) = captured {
             if is_en_passant {
-                // En passant: captured pawn is not on to_sq, it's one rank behind
                 let cap_sq_idx = if moving_side == Color::White {
                     to.index() - 8
                 } else {
@@ -240,10 +212,10 @@ pub struct AccumulatorStack {
 }
 
 impl AccumulatorStack {
-    pub fn new() -> Self {
+    pub fn new(l1_size: usize) -> Self {
         Self {
             stack: vec![AccumulatorState {
-                acc: Accumulator::new(),
+                acc: Accumulator::new(l1_size),
                 dirty: [true; 2],
                 king_moved: false,
             }],
@@ -299,33 +271,33 @@ impl AccumulatorStack {
 
 impl Default for AccumulatorStack {
     fn default() -> Self {
-        Self::new()
+        Self::new(L1_SIZE)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::arch::L1_SIZE;
+    use crate::arch::{NetworkDims, L1_SIZE};
     use chess_types::MoveFlag;
 
     fn test_network() -> Network {
-        let mut net = Network::new_zeroed();
+        let mut net = Network::new_zeroed(NetworkDims::default_full());
         for (i, w) in net.input_weights.iter_mut().enumerate() {
             *w = (i % 256) as i16 - 128;
         }
-        let mut bias = [0i16; L1_SIZE];
+        let mut bias = vec![0i16; L1_SIZE];
         for (i, b) in bias.iter_mut().enumerate() {
             *b = (i as i16) % 50 - 25;
         }
-        *net.input_bias = bias;
+        net.input_bias.copy_from_slice(&bias);
         net
     }
 
     #[test]
     fn accumulator_init_from_bias() {
-        let mut acc = Accumulator::new();
-        let mut bias = [0i16; L1_SIZE];
+        let mut acc = Accumulator::new(L1_SIZE);
+        let mut bias = vec![0i16; L1_SIZE];
         for (i, b) in bias.iter_mut().enumerate() {
             *b = (i as i16) * 3 - 100;
         }
@@ -336,16 +308,16 @@ mod tests {
 
     #[test]
     fn accumulator_add_remove_roundtrip() {
-        let mut net = Network::new_zeroed();
+        let mut net = Network::new_zeroed(NetworkDims::default_full());
         let feature_idx = 42;
         for i in 0..L1_SIZE {
             net.input_weights[feature_idx * L1_SIZE + i] = (i as i16) * 7 - 50;
         }
 
-        let mut acc = Accumulator::new();
+        let mut acc = Accumulator::new(L1_SIZE);
         acc.init_from_bias(&net.input_bias);
-        let snapshot_white = acc.white;
-        let snapshot_black = acc.black;
+        let snapshot_white = acc.white.clone();
+        let snapshot_black = acc.black.clone();
 
         acc.add_feature(Color::White, feature_idx, &net.input_weights);
         assert_ne!(acc.white, snapshot_white);
@@ -360,22 +332,20 @@ mod tests {
 
     #[test]
     fn accumulator_refresh_startpos() {
-        let mut net = Network::new_zeroed();
-        // Set deterministic non-zero input weights.
+        let mut net = Network::new_zeroed(NetworkDims::default_full());
         for (i, w) in net.input_weights.iter_mut().enumerate() {
             *w = (i % 256) as i16 - 128;
         }
-        let mut bias = [0i16; L1_SIZE];
+        let mut bias = vec![0i16; L1_SIZE];
         for (i, b) in bias.iter_mut().enumerate() {
             *b = (i as i16) % 50 - 25;
         }
-        *net.input_bias = bias;
+        net.input_bias.copy_from_slice(&bias);
 
         let pos = Position::startpos();
-        let mut acc = Accumulator::new();
+        let mut acc = Accumulator::new(L1_SIZE);
         acc.refresh(&pos, &net);
 
-        // Manually compute expected accumulator for both perspectives.
         let non_king_kinds = [
             PieceKind::Pawn,
             PieceKind::Knight,
@@ -385,7 +355,7 @@ mod tests {
         ];
 
         for perspective in [Color::White, Color::Black] {
-            let mut expected = bias;
+            let mut expected = bias.clone();
             let king_piece = Piece::new(perspective, PieceKind::King);
             let king_sq_idx = pos.piece_bitboard(king_piece).lsb().unwrap();
             let king_sq = Square::new(king_sq_idx as u8).unwrap();
@@ -415,13 +385,12 @@ mod tests {
             );
         }
 
-        // Verify that the accumulator was actually populated (not just bias).
         assert_ne!(acc.white, bias, "White accumulator should differ from bias");
         assert_ne!(acc.black, bias, "Black accumulator should differ from bias");
     }
 
     fn assert_acc_matches_refresh(stack: &AccumulatorStack, pos: &Position, network: &Network) {
-        let mut expected = Accumulator::new();
+        let mut expected = Accumulator::new(L1_SIZE);
         expected.refresh(pos, network);
         let actual = &stack.current().acc;
         assert_eq!(
@@ -440,7 +409,7 @@ mod tests {
         network: &Network,
     ) {
         stack.refresh_if_needed(pos, network);
-        let mut expected = Accumulator::new();
+        let mut expected = Accumulator::new(L1_SIZE);
         expected.refresh(pos, network);
         let actual = &stack.current().acc;
         assert_eq!(
@@ -456,13 +425,11 @@ mod tests {
     #[test]
     fn incremental_matches_full_refresh_quiet_move() {
         let net = test_network();
-        // Start from startpos, play e2e4 (double pawn push, non-king non-capture)
         let mut pos = Position::startpos();
-        let mut stack = AccumulatorStack::new();
+        let mut stack = AccumulatorStack::new(L1_SIZE);
         stack.refresh_if_needed(&pos, &net);
 
         let moves = chess_movegen::generate_legal_moves(&mut pos);
-        // Find e2e4
         let mv = moves
             .iter()
             .find(|m| m.from_sq() == Square::E2 && m.to_sq() == Square::E4)
@@ -479,15 +446,13 @@ mod tests {
     #[test]
     fn incremental_matches_full_refresh_capture() {
         let net = test_network();
-        // Position with a capture available
         let mut pos =
             Position::from_fen("rnbqkbnr/ppp1pppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq d6 0 2")
                 .expect("valid fen");
-        let mut stack = AccumulatorStack::new();
+        let mut stack = AccumulatorStack::new(L1_SIZE);
         stack.refresh_if_needed(&pos, &net);
 
         let moves = chess_movegen::generate_legal_moves(&mut pos);
-        // Find exd5
         let mv = moves
             .iter()
             .find(|m| m.from_sq() == Square::E4 && m.to_sq() == Square::D5 && m.is_capture())
@@ -504,11 +469,10 @@ mod tests {
     #[test]
     fn incremental_matches_full_refresh_en_passant() {
         let net = test_network();
-        // Position with en passant available
         let mut pos =
             Position::from_fen("rnbqkbnr/pppp1ppp/8/4pP2/8/8/PPPPP1PP/RNBQKBNR w KQkq e6 0 3")
                 .expect("valid fen");
-        let mut stack = AccumulatorStack::new();
+        let mut stack = AccumulatorStack::new(L1_SIZE);
         stack.refresh_if_needed(&pos, &net);
 
         let moves = chess_movegen::generate_legal_moves(&mut pos);
@@ -528,12 +492,11 @@ mod tests {
     #[test]
     fn incremental_matches_full_refresh_castling() {
         let net = test_network();
-        // Position where white can castle king-side
         let mut pos = Position::from_fen(
             "r1bqk2r/ppppbppp/2n2n2/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4",
         )
         .expect("valid fen");
-        let mut stack = AccumulatorStack::new();
+        let mut stack = AccumulatorStack::new(L1_SIZE);
         stack.refresh_if_needed(&pos, &net);
 
         let moves = chess_movegen::generate_legal_moves(&mut pos);
@@ -545,17 +508,15 @@ mod tests {
 
         let undo = pos.make_move(mv);
         stack.push_move(&pos, mv, undo.captured, &net);
-        // Castling involves king move -> needs refresh
         assert_acc_matches_refresh_after_king_refresh(&mut stack, &pos, &net);
 
         stack.pop();
         pos.unmake_move(mv, undo);
 
-        // Now test queen-side castling
         let mut pos2 =
             Position::from_fen("r3kbnr/pppqpppp/2n5/3p1b2/3P1B2/2N5/PPPQPPPP/R3KBNR w KQkq - 6 5")
                 .expect("valid fen");
-        let mut stack2 = AccumulatorStack::new();
+        let mut stack2 = AccumulatorStack::new(L1_SIZE);
         stack2.refresh_if_needed(&pos2, &net);
 
         let moves2 = chess_movegen::generate_legal_moves(&mut pos2);
@@ -575,9 +536,8 @@ mod tests {
     #[test]
     fn incremental_matches_full_refresh_promotion() {
         let net = test_network();
-        // Position where white can promote
         let mut pos = Position::from_fen("8/4P3/8/8/8/8/8/4K2k w - - 0 1").expect("valid fen");
-        let mut stack = AccumulatorStack::new();
+        let mut stack = AccumulatorStack::new(L1_SIZE);
         stack.refresh_if_needed(&pos, &net);
 
         let moves = chess_movegen::generate_legal_moves(&mut pos);
@@ -594,9 +554,8 @@ mod tests {
         stack.pop();
         pos.unmake_move(mv, undo);
 
-        // Test promotion with capture
         let mut pos2 = Position::from_fen("3r4/4P3/8/8/8/8/8/4K2k w - - 0 1").expect("valid fen");
-        let mut stack2 = AccumulatorStack::new();
+        let mut stack2 = AccumulatorStack::new(L1_SIZE);
         stack2.refresh_if_needed(&pos2, &net);
 
         let moves2 = chess_movegen::generate_legal_moves(&mut pos2);
@@ -617,31 +576,26 @@ mod tests {
     fn stack_push_pop_restores_state() {
         let net = test_network();
         let mut pos = Position::startpos();
-        let mut stack = AccumulatorStack::new();
+        let mut stack = AccumulatorStack::new(L1_SIZE);
         stack.refresh_if_needed(&pos, &net);
 
-        let before_white = stack.current().acc.white;
-        let before_black = stack.current().acc.black;
+        let before_white = stack.current().acc.white.clone();
+        let before_black = stack.current().acc.black.clone();
 
         let moves = chess_movegen::generate_legal_moves(&mut pos);
         let mv = moves[0];
         let undo = pos.make_move(mv);
         stack.push_move(&pos, mv, undo.captured, &net);
 
-        // State should have changed
-        // (Not necessarily, if the move doesn't affect the accumulator... but with non-zero weights it will)
-
         stack.pop();
         pos.unmake_move(mv, undo);
 
         assert_eq!(
-            stack.current().acc.white,
-            before_white,
+            stack.current().acc.white, before_white,
             "White perspective not restored after push/pop"
         );
         assert_eq!(
-            stack.current().acc.black,
-            before_black,
+            stack.current().acc.black, before_black,
             "Black perspective not restored after push/pop"
         );
     }
@@ -650,10 +604,9 @@ mod tests {
     fn incremental_chain_matches_refresh() {
         let net = test_network();
         let mut pos = Position::startpos();
-        let mut stack = AccumulatorStack::new();
+        let mut stack = AccumulatorStack::new(L1_SIZE);
         stack.refresh_if_needed(&pos, &net);
 
-        // Play a sequence of moves from startpos
         let move_sequence = [
             ("e2", "e4"),
             ("e7", "e5"),
@@ -687,21 +640,17 @@ mod tests {
             played_moves.push(mv);
         }
 
-        // After 10+ moves, compare to full refresh
-        let mut expected = Accumulator::new();
+        let mut expected = Accumulator::new(L1_SIZE);
         expected.refresh(&pos, &net);
         assert_eq!(
-            stack.current().acc.white,
-            expected.white,
+            stack.current().acc.white, expected.white,
             "Chain: white perspective mismatch"
         );
         assert_eq!(
-            stack.current().acc.black,
-            expected.black,
+            stack.current().acc.black, expected.black,
             "Chain: black perspective mismatch"
         );
 
-        // Unwind
         for (mv, undo) in played_moves.into_iter().rev().zip(undos.into_iter().rev()) {
             stack.pop();
             pos.unmake_move(mv, undo);
@@ -712,15 +661,13 @@ mod tests {
     fn dirty_flag_tracks_correctly() {
         let net = test_network();
         let mut pos = Position::startpos();
-        let mut stack = AccumulatorStack::new();
+        let mut stack = AccumulatorStack::new(L1_SIZE);
         stack.refresh_if_needed(&pos, &net);
 
-        // After refresh, not dirty
         assert!(!stack.current().is_dirty(Color::White));
         assert!(!stack.current().is_dirty(Color::Black));
         assert!(!stack.current().needs_refresh());
 
-        // Non-king move: state pushed, not king_moved
         let moves = chess_movegen::generate_legal_moves(&mut pos);
         let mv = moves
             .iter()
@@ -734,15 +681,13 @@ mod tests {
         stack.pop();
         pos.unmake_move(mv, undo);
 
-        // King move: needs_refresh should be true
         let mut pos2 =
             Position::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQK2R w KQkq - 0 1")
                 .expect("valid fen");
-        let mut stack2 = AccumulatorStack::new();
+        let mut stack2 = AccumulatorStack::new(L1_SIZE);
         stack2.refresh_if_needed(&pos2, &net);
 
         let moves2 = chess_movegen::generate_legal_moves(&mut pos2);
-        // Find Kf1 (king move)
         let king_mv = moves2
             .iter()
             .find(|m| {
@@ -771,35 +716,94 @@ mod tests {
 
     #[test]
     fn accumulator_add_remove_matches_scalar_reference() {
-        let mut net = Network::new_zeroed();
+        let mut net = Network::new_zeroed(NetworkDims::default_full());
         for (i, w) in net.input_weights.iter_mut().enumerate() {
             *w = (i % 256) as i16 - 128;
         }
-        *net.input_bias = [0i16; L1_SIZE];
+        for b in net.input_bias.iter_mut() {
+            *b = 0;
+        }
 
         let feature_idx = 100;
-        let mut acc = Accumulator::new();
+        let mut acc = Accumulator::new(L1_SIZE);
         acc.init_from_bias(&net.input_bias);
 
-        // Compute expected result with scalar arithmetic
         let offset = feature_idx * L1_SIZE;
-        let mut expected_white = acc.white;
+        let mut expected_white = acc.white.clone();
         for i in 0..L1_SIZE {
             expected_white[i] += net.input_weights[offset + i];
         }
 
-        // Use the actual add_feature (which now dispatches to SIMD)
         acc.add_feature(Color::White, feature_idx, &net.input_weights);
         assert_eq!(
             acc.white, expected_white,
             "SIMD add_feature must match scalar"
         );
 
-        // Now remove and verify we return to original
         acc.remove_feature(Color::White, feature_idx, &net.input_weights);
         assert_eq!(
-            acc.white, *net.input_bias,
+            acc.white,
+            net.input_bias.to_vec(),
             "SIMD remove_feature must round-trip"
         );
+    }
+
+    #[test]
+    fn accumulator_non_default_dims_refresh_and_incremental() {
+        let l1 = 128;
+        let dims = NetworkDims {
+            halfkp_features: 40960,
+            l1_size: l1,
+            l2_size: 16,
+            output_size: 1,
+        };
+        let mut net = Network::new_zeroed(dims);
+        for (i, w) in net.input_weights.iter_mut().enumerate() {
+            *w = (i % 200) as i16 - 100;
+        }
+        for (i, b) in net.input_bias.iter_mut().enumerate() {
+            *b = (i as i16) % 30 - 15;
+        }
+
+        let pos = Position::startpos();
+        let mut acc = Accumulator::new(l1);
+        acc.refresh(&pos, &net);
+
+        assert_eq!(acc.white.len(), l1);
+        assert_eq!(acc.black.len(), l1);
+
+        let mut expected_white = net.input_bias.to_vec();
+        let non_king_kinds = [
+            PieceKind::Pawn,
+            PieceKind::Knight,
+            PieceKind::Bishop,
+            PieceKind::Rook,
+            PieceKind::Queen,
+        ];
+        let king_piece = Piece::new(Color::White, PieceKind::King);
+        let king_sq_idx = pos.piece_bitboard(king_piece).lsb().unwrap();
+        let king_sq = Square::new(king_sq_idx as u8).unwrap();
+        for &piece_color in &[Color::White, Color::Black] {
+            for &piece_kind in &non_king_kinds {
+                let piece = Piece::new(piece_color, piece_kind);
+                for sq_idx in pos.piece_bitboard(piece) {
+                    let piece_sq = Square::new(sq_idx as u8).unwrap();
+                    let fi = feature_index(king_sq, piece_sq, piece_kind, piece_color);
+                    let offset = fi * l1;
+                    for i in 0..l1 {
+                        expected_white[i] += net.input_weights[offset + i];
+                    }
+                }
+            }
+        }
+        assert_eq!(acc.white, expected_white);
+
+        let mut acc2 = Accumulator::new(l1);
+        acc2.init_from_bias(&net.input_bias);
+        let snapshot = acc2.white.clone();
+        acc2.add_feature(Color::White, 42, &net.input_weights);
+        assert_ne!(acc2.white, snapshot);
+        acc2.remove_feature(Color::White, 42, &net.input_weights);
+        assert_eq!(acc2.white, snapshot);
     }
 }

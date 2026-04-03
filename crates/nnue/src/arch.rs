@@ -44,3 +44,22 @@ pub const QUANTIZATION_SHIFT_HIDDEN: i32 = 6;
 /// Clipped-ReLU activation clamps values to `[0, CLIPPED_RELU_MAX]` (i.e., `[0, 127]`),
 /// fitting the result into an `i8` range for the next layer's input.
 pub const CLIPPED_RELU_MAX: i16 = 127;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NetworkDims {
+    pub halfkp_features: usize,
+    pub l1_size: usize,
+    pub l2_size: usize,
+    pub output_size: usize,
+}
+
+impl NetworkDims {
+    pub fn default_full() -> Self {
+        Self {
+            halfkp_features: HALFKP_FEATURES,
+            l1_size: L1_SIZE,
+            l2_size: L2_SIZE,
+            output_size: OUTPUT_SIZE,
+        }
+    }
+}

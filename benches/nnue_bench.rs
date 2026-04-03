@@ -1,11 +1,11 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
 use chess_board::Position;
-use chess_nnue::{forward, Accumulator, AccumulatorStack, Network};
+use chess_nnue::{forward, Accumulator, AccumulatorStack, Network, NetworkDims, L1_SIZE};
 use chess_types::Color;
 
 fn make_test_network() -> Network {
-    let mut net = Network::new_zeroed();
+    let mut net = Network::new_zeroed(NetworkDims::default_full());
     for (i, w) in net.input_weights.iter_mut().enumerate() {
         *w = ((i % 256) as i16).wrapping_sub(128);
     }
@@ -27,7 +27,7 @@ fn make_test_network() -> Network {
 
 fn bench_forward_pass(c: &mut Criterion) {
     let net = make_test_network();
-    let mut acc = Accumulator::new();
+    let mut acc = Accumulator::new(L1_SIZE);
     acc.init_from_bias(&net.input_bias);
     // Add some features to make it non-trivial
     for idx in 0..20 {
@@ -42,7 +42,7 @@ fn bench_forward_pass(c: &mut Criterion) {
 
 fn bench_accumulator_add_remove(c: &mut Criterion) {
     let net = make_test_network();
-    let mut acc = Accumulator::new();
+    let mut acc = Accumulator::new(L1_SIZE);
     acc.init_from_bias(&net.input_bias);
 
     let feature_indices: Vec<usize> = (0..16).map(|i| i * 200).collect();
@@ -65,7 +65,7 @@ fn bench_evaluate_position(c: &mut Criterion) {
 
     c.bench_function("evaluate_position", |b| {
         b.iter(|| {
-            let mut stack = AccumulatorStack::new();
+            let mut stack = AccumulatorStack::new(L1_SIZE);
             stack.refresh_if_needed(black_box(&pos), black_box(&net));
             black_box(stack.evaluate(black_box(&pos), black_box(&net), Color::White))
         })
@@ -75,7 +75,7 @@ fn bench_evaluate_position(c: &mut Criterion) {
 fn bench_push_pop_cycle(c: &mut Criterion) {
     let net = make_test_network();
     let mut pos = Position::startpos();
-    let mut stack = AccumulatorStack::new();
+    let mut stack = AccumulatorStack::new(L1_SIZE);
     stack.refresh_if_needed(&pos, &net);
 
     let moves = chess_movegen::generate_legal_moves(&mut pos);

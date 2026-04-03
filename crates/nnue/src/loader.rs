@@ -2,8 +2,8 @@ use std::fs::File;
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::Path;
 
-use crate::arch::{HALFKP_FEATURES, L1_SIZE, L2_SIZE, OUTPUT_SIZE};
-use crate::format::{architecture_hash, read_header, write_header, Header, FORMAT_VERSION, MAGIC};
+use crate::arch::NetworkDims;
+use crate::format::{architecture_hash_for, read_header, write_header, Header, FORMAT_VERSION, MAGIC};
 use crate::network::Network;
 
 #[derive(Debug, thiserror::Error)]
@@ -48,7 +48,14 @@ pub fn load(path: &Path) -> Result<Network, NnueLoadError> {
         });
     }
 
-    let expected_hash = architecture_hash();
+    let dims = NetworkDims {
+        halfkp_features: header.halfkp_features as usize,
+        l1_size: header.l1_size as usize,
+        l2_size: header.l2_size as usize,
+        output_size: header.output_size as usize,
+    };
+
+    let expected_hash = architecture_hash_for(&dims);
     if header.arch_hash != expected_hash {
         return Err(NnueLoadError::ArchitectureMismatch {
             file_hash: header.arch_hash,
@@ -56,37 +63,25 @@ pub fn load(path: &Path) -> Result<Network, NnueLoadError> {
         });
     }
 
-    check_dim(
-        "halfkp_features",
-        header.halfkp_features,
-        HALFKP_FEATURES as u32,
+    let input_weights =
+        read_i16_vec(&mut reader, dims.halfkp_features * dims.l1_size, "input_weights")?;
+    let input_bias = read_i16_vec(&mut reader, dims.l1_size, "input_bias")?;
+    let hidden1_weights = read_i8_vec(
+        &mut reader,
+        dims.l2_size * 2 * dims.l1_size,
+        "hidden1_weights",
     )?;
-    check_dim("l1_size", header.l1_size, L1_SIZE as u32)?;
-    check_dim("l2_size", header.l2_size, L2_SIZE as u32)?;
-    check_dim("output_size", header.output_size, OUTPUT_SIZE as u32)?;
-
-    let input_weights = read_i16_vec(&mut reader, HALFKP_FEATURES * L1_SIZE, "input_weights")?;
-    let input_bias_vec = read_i16_vec(&mut reader, L1_SIZE, "input_bias")?;
-    let hidden1_weights = read_i8_vec(&mut reader, L2_SIZE * 2 * L1_SIZE, "hidden1_weights")?;
-    let hidden1_bias_vec = read_i32_vec(&mut reader, L2_SIZE, "hidden1_bias")?;
-    let hidden2_weights_vec = read_i8_vec(&mut reader, L2_SIZE, "hidden2_weights")?;
+    let hidden1_bias = read_i32_vec(&mut reader, dims.l2_size, "hidden1_bias")?;
+    let hidden2_weights = read_i8_vec(&mut reader, dims.l2_size, "hidden2_weights")?;
     let hidden2_bias = read_i32_single(&mut reader, "hidden2_bias")?;
 
-    let mut input_bias = Box::new([0i16; L1_SIZE]);
-    input_bias.copy_from_slice(&input_bias_vec);
-
-    let mut hidden1_bias = Box::new([0i32; L2_SIZE]);
-    hidden1_bias.copy_from_slice(&hidden1_bias_vec);
-
-    let mut hidden2_weights = Box::new([0i8; L2_SIZE]);
-    hidden2_weights.copy_from_slice(&hidden2_weights_vec);
-
     Ok(Network {
+        dims,
         input_weights: input_weights.into_boxed_slice(),
-        input_bias,
+        input_bias: input_bias.into_boxed_slice(),
         hidden1_weights: hidden1_weights.into_boxed_slice(),
-        hidden1_bias,
-        hidden2_weights,
+        hidden1_bias: hidden1_bias.into_boxed_slice(),
+        hidden2_weights: hidden2_weights.into_boxed_slice(),
         hidden2_bias,
     })
 }
@@ -95,39 +90,25 @@ pub fn write(path: &Path, network: &Network) -> Result<(), NnueLoadError> {
     let file = File::create(path)?;
     let mut writer = BufWriter::new(file);
 
+    let dims = network.dims();
     let header = Header {
         version: FORMAT_VERSION,
-        arch_hash: architecture_hash(),
-        halfkp_features: HALFKP_FEATURES as u32,
-        l1_size: L1_SIZE as u32,
-        l2_size: L2_SIZE as u32,
-        output_size: OUTPUT_SIZE as u32,
+        arch_hash: architecture_hash_for(dims),
+        halfkp_features: dims.halfkp_features as u32,
+        l1_size: dims.l1_size as u32,
+        l2_size: dims.l2_size as u32,
+        output_size: dims.output_size as u32,
     };
 
     write_header(&mut writer, &header)?;
     write_i16_slice(&mut writer, &network.input_weights)?;
-    write_i16_slice(&mut writer, network.input_bias.as_ref())?;
+    write_i16_slice(&mut writer, &network.input_bias)?;
     write_i8_slice(&mut writer, &network.hidden1_weights)?;
-    write_i32_slice(&mut writer, network.hidden1_bias.as_ref())?;
-    write_i8_slice(&mut writer, network.hidden2_weights.as_ref())?;
+    write_i32_slice(&mut writer, &network.hidden1_bias)?;
+    write_i8_slice(&mut writer, &network.hidden2_weights)?;
     writer.write_all(&network.hidden2_bias.to_le_bytes())?;
     writer.flush()?;
 
-    Ok(())
-}
-
-fn check_dim(
-    field: &'static str,
-    file_value: u32,
-    expected_value: u32,
-) -> Result<(), NnueLoadError> {
-    if file_value != expected_value {
-        return Err(NnueLoadError::DimensionMismatch {
-            field,
-            file_value,
-            expected_value,
-        });
-    }
     Ok(())
 }
 
@@ -217,11 +198,13 @@ fn write_i32_slice(writer: &mut impl Write, data: &[i32]) -> std::io::Result<()>
 mod tests {
     use super::*;
     use crate::accumulator::Accumulator;
+    use crate::arch::{HALFKP_FEATURES, L1_SIZE, L2_SIZE, OUTPUT_SIZE};
+    use crate::format::{architecture_hash, write_header, Header, FORMAT_VERSION, MAGIC};
     use crate::inference::forward;
     use chess_types::Color;
 
     fn make_deterministic_network() -> Network {
-        let mut net = Network::new_zeroed();
+        let mut net = Network::new_zeroed(NetworkDims::default_full());
         for (i, w) in net.input_weights.iter_mut().enumerate() {
             *w = (i % 256) as i16 - 128;
         }
@@ -263,14 +246,13 @@ mod tests {
 
     #[test]
     fn load_invalid_magic() {
-        let net = Network::new_zeroed();
+        let net = Network::new_zeroed(NetworkDims::default_full());
         let dir = std::env::temp_dir().join("nnue_test_bad_magic");
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("bad_magic.nnue");
 
         write(&path, &net).unwrap();
 
-        // Overwrite magic bytes
         let mut data = std::fs::read(&path).unwrap();
         data[0..4].copy_from_slice(b"BAAD");
         std::fs::write(&path, &data).unwrap();
@@ -290,36 +272,26 @@ mod tests {
     }
 
     #[test]
-    fn load_dimension_mismatch() {
-        let net = Network::new_zeroed();
+    fn load_dimension_mismatch_detected_via_arch_hash() {
+        let net = Network::new_zeroed(NetworkDims::default_full());
         let dir = std::env::temp_dir().join("nnue_test_dim_mismatch");
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("dim_mismatch.nnue");
 
         write(&path, &net).unwrap();
 
-        // Patch l1_size field (offset 16-19) to a wrong value
+        // Patch l1_size field (offset 16-19) to a wrong value without updating arch hash
         let mut data = std::fs::read(&path).unwrap();
         let wrong_l1: u32 = 999;
         data[16..20].copy_from_slice(&wrong_l1.to_le_bytes());
-        // Keep the compiled architecture hash so we get past the arch_hash check
-        // and reach the individual dimension checks
         std::fs::write(&path, &data).unwrap();
 
         let Err(err) = load(&path) else {
             panic!("expected error");
         };
         match err {
-            NnueLoadError::DimensionMismatch {
-                field,
-                file_value,
-                expected_value,
-            } => {
-                assert_eq!(field, "l1_size");
-                assert_eq!(file_value, 999);
-                assert_eq!(expected_value, L1_SIZE as u32);
-            }
-            other => panic!("expected DimensionMismatch, got: {other}"),
+            NnueLoadError::ArchitectureMismatch { .. } => {}
+            other => panic!("expected ArchitectureMismatch, got: {other}"),
         }
 
         std::fs::remove_dir_all(&dir).ok();
@@ -331,7 +303,6 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("truncated.nnue");
 
-        // Write a valid header but no weight data
         let mut file = std::fs::File::create(&path).unwrap();
         let header = Header {
             version: FORMAT_VERSION,
@@ -342,7 +313,7 @@ mod tests {
             output_size: OUTPUT_SIZE as u32,
         };
         write_header(&mut file, &header).unwrap();
-        file.flush().unwrap();
+        std::io::Write::flush(&mut file).unwrap();
         drop(file);
 
         let Err(err) = load(&path) else {
@@ -358,8 +329,7 @@ mod tests {
 
     #[test]
     fn load_and_forward_reference() {
-        let mut net = Network::new_zeroed();
-        // Use simple known weights for hand-verification
+        let mut net = Network::new_zeroed(NetworkDims::default_full());
         for w in net.hidden1_weights.iter_mut() {
             *w = 1;
         }
@@ -374,7 +344,7 @@ mod tests {
         write(&path, &net).unwrap();
         let loaded = load(&path).unwrap();
 
-        let mut acc = Accumulator::new();
+        let mut acc = Accumulator::new(L1_SIZE);
         for i in 0..L1_SIZE {
             acc.white[i] = i as i16;
             acc.black[i] = (L1_SIZE - 1 - i) as i16;
@@ -383,7 +353,6 @@ mod tests {
         let original_result = forward(&acc, &net, Color::White);
         let loaded_result = forward(&acc, &loaded, Color::White);
         assert_eq!(original_result, loaded_result);
-        // Cross-check with known value from inference tests
         assert_eq!(loaded_result, 63);
 
         std::fs::remove_dir_all(&dir).ok();
@@ -391,14 +360,13 @@ mod tests {
 
     #[test]
     fn load_unsupported_version() {
-        let net = Network::new_zeroed();
+        let net = Network::new_zeroed(NetworkDims::default_full());
         let dir = std::env::temp_dir().join("nnue_test_bad_version");
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("bad_version.nnue");
 
         write(&path, &net).unwrap();
 
-        // Patch version field (offset 4-7) to 99
         let mut data = std::fs::read(&path).unwrap();
         data[4..8].copy_from_slice(&99u32.to_le_bytes());
         std::fs::write(&path, &data).unwrap();
@@ -412,6 +380,89 @@ mod tests {
                 assert_eq!(got, 99);
             }
             other => panic!("expected UnsupportedVersion, got: {other}"),
+        }
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn roundtrip_non_default_dimensions() {
+        let dims = NetworkDims {
+            halfkp_features: 40960,
+            l1_size: 128,
+            l2_size: 16,
+            output_size: 1,
+        };
+        let mut net = Network::new_zeroed(dims);
+        for (i, w) in net.input_weights.iter_mut().enumerate() {
+            *w = (i % 200) as i16 - 100;
+        }
+        for (i, b) in net.input_bias.iter_mut().enumerate() {
+            *b = (i % 30) as i16 - 15;
+        }
+        for (i, w) in net.hidden1_weights.iter_mut().enumerate() {
+            *w = (i % 100) as i8 - 50;
+        }
+        for (i, b) in net.hidden1_bias.iter_mut().enumerate() {
+            *b = (i as i32) * 5 - 40;
+        }
+        for (i, w) in net.hidden2_weights.iter_mut().enumerate() {
+            *w = (i % 10) as i8 - 5;
+        }
+        net.hidden2_bias = 17;
+
+        let dir = std::env::temp_dir().join("nnue_test_nondefault_roundtrip");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("small.nnue");
+
+        write(&path, &net).unwrap();
+        let loaded = load(&path).unwrap();
+
+        assert_eq!(*loaded.dims(), dims);
+        assert_eq!(&*loaded.input_weights, &*net.input_weights);
+        assert_eq!(&*loaded.input_bias, &*net.input_bias);
+        assert_eq!(&*loaded.hidden1_weights, &*net.hidden1_weights);
+        assert_eq!(&*loaded.hidden1_bias, &*net.hidden1_bias);
+        assert_eq!(&*loaded.hidden2_weights, &*net.hidden2_weights);
+        assert_eq!(loaded.hidden2_bias, net.hidden2_bias);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn load_corrupted_dimensions_returns_arch_mismatch() {
+        let dims = NetworkDims {
+            halfkp_features: 40960,
+            l1_size: 128,
+            l2_size: 16,
+            output_size: 1,
+        };
+        let net = Network::new_zeroed(dims);
+        let dir = std::env::temp_dir().join("nnue_test_corrupted_dims");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("corrupted.nnue");
+
+        write(&path, &net).unwrap();
+
+        // Corrupt l2_size (offset 20-23) without updating arch hash
+        let mut data = std::fs::read(&path).unwrap();
+        let original_arch_hash = u32::from_le_bytes([data[8], data[9], data[10], data[11]]);
+        let wrong_l2: u32 = 99;
+        data[20..24].copy_from_slice(&wrong_l2.to_le_bytes());
+        std::fs::write(&path, &data).unwrap();
+
+        let Err(err) = load(&path) else {
+            panic!("expected error");
+        };
+        match err {
+            NnueLoadError::ArchitectureMismatch {
+                file_hash,
+                expected_hash,
+            } => {
+                assert_eq!(file_hash, original_arch_hash);
+                assert_ne!(file_hash, expected_hash);
+            }
+            other => panic!("expected ArchitectureMismatch, got: {other}"),
         }
 
         std::fs::remove_dir_all(&dir).ok();
