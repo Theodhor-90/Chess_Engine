@@ -3,4 +3,4 @@ pub mod position;
 pub mod zobrist;
 
 pub use fen::FenError;
-pub use position::{CastlingRights, Position};
+pub use position::{CastlingRights, Position, UndoInfo};

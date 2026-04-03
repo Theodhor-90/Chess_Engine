@@ -1,0 +1,5 @@
+- **`crates/board/src/position.rs`** — modified:
+  - Added `pub fn is_square_attacked(&self, square: Square, by_side: Color) -> bool` method after `unmake_move`, before `pub(crate)` setters
+  - Implements pawn (directional reverse captures), knight (8 L-shaped offsets), bishop/queen (4 diagonal rays), rook/queen (4 orthogonal rays), king (8 adjacent) attack detection with bounds checking and ray-walking for sliders
+  - Added 14 unit tests: `is_square_attacked_pawn_white`, `_pawn_black`, `_pawn_edge_file`, `_knight`, `_knight_corner`, `_bishop_unblocked`, `_bishop_blocked`, `_rook_unblocked`, `_rook_blocked`, `_queen`, `_king`, `_king_corner`, `_no_attackers`, `_multiple_attackers`
+  - All 66 tests pass; `cargo fmt --check` and `cargo clippy -- -D warnings` clean
