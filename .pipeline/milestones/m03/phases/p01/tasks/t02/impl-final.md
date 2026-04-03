@@ -1,0 +1,1 @@
+All verification commands passed — `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test -p chess-eval` (9 tests), and full workspace `cargo test` (207 tests, 0 failures). The implementation is complete.

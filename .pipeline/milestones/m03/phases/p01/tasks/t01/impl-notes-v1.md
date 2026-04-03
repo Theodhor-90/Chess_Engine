@@ -1,0 +1,4 @@
+- **`Cargo.toml`** (workspace root) — added `"crates/eval"` to workspace `members`
+- **`crates/eval/Cargo.toml`** — new crate manifest with `chess-types` and `chess-board` path dependencies
+- **`crates/eval/src/material.rs`** — new file: `PAWN_VALUE`/`KNIGHT_VALUE`/`BISHOP_VALUE`/`ROOK_VALUE`/`QUEEN_VALUE` constants, `piece_value()` helper, `material_score()` function returning white-relative score, 3 unit tests
+- **`crates/eval/src/lib.rs`** — new file: `pub mod material`, re-exports of material constants, `evaluate()` function with side-to-move negation, 3 unit tests
