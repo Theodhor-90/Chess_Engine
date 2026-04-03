@@ -170,7 +170,7 @@
         "totalAttempts": 3,
         "tiebreakerUsed": true
       },
-      "currentPhase": "p01",
+      "currentPhase": "p02",
       "phases": {
         "p01": {
           "status": "completed",
@@ -223,14 +223,54 @@
           }
         },
         "p02": {
-          "status": "pending",
+          "status": "completed",
           "planning": {
-            "iteration": 0,
-            "totalAttempts": 0,
-            "tiebreakerUsed": false
+            "iteration": 3,
+            "totalAttempts": 3,
+            "tiebreakerUsed": true
           },
           "currentTask": null,
-          "tasks": {}
+          "tasks": {
+            "t01": {
+              "status": "completed",
+              "planning": {
+                "iteration": 1,
+                "totalAttempts": 1,
+                "tiebreakerUsed": false
+              },
+              "implementation": {
+                "iteration": 1,
+                "totalAttempts": 1,
+                "tiebreakerUsed": false
+              }
+            },
+            "t02": {
+              "status": "completed",
+              "planning": {
+                "iteration": 3,
+                "totalAttempts": 3,
+                "tiebreakerUsed": true
+              },
+              "implementation": {
+                "iteration": 1,
+                "totalAttempts": 1,
+                "tiebreakerUsed": false
+              }
+            },
+            "t03": {
+              "status": "completed",
+              "planning": {
+                "iteration": 3,
+                "totalAttempts": 3,
+                "tiebreakerUsed": true
+              },
+              "implementation": {
+                "iteration": 1,
+                "totalAttempts": 1,
+                "tiebreakerUsed": false
+              }
+            }
+          }
         },
         "p03": {
           "status": "pending",

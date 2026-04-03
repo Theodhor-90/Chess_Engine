@@ -1,0 +1,3 @@
+- **`crates/movegen/src/queens.rs`** — Created. `generate_queen_moves` computes queen attacks as `bishop_attacks | rook_attacks`, masks friendly pieces, emits captures/quiets. `generate_sliding_moves` calls bishop, rook, and queen generators. 5 unit tests: starting position (0 moves), midgame blocked (0 moves), pawn-blocked (0 moves), empty board (27 moves), combined sliding (27 moves).
+- **`crates/movegen/src/lib.rs`** — Added `pub mod queens;`, `pub use queens::generate_queen_moves;`, `pub use queens::generate_sliding_moves;`.
+- **Verification**: `cargo fmt --check` clean, `cargo clippy -- -D warnings` clean, `cargo test` 57/57 passed (5 new queen tests).
