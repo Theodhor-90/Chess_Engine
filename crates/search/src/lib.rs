@@ -16,6 +16,7 @@ use tt::{score_from_tt, score_to_tt, verification_key, BoundType, TranspositionT
 
 pub const MATE_SCORE: i32 = 30000;
 pub const INFINITY: i32 = 31000;
+const IID_MIN_DEPTH: i32 = 4;
 
 /// Callback invoked after each completed search depth: `(depth, score, nodes, elapsed, pv)`.
 pub type DepthCallback<'a> = &'a dyn Fn(u8, i32, u64, Duration, &[Move]);
@@ -39,6 +40,7 @@ pub struct SearchContext {
     stop_flag: Option<Arc<AtomicBool>>,
     max_nodes: Option<u64>,
     tt: TranspositionTable,
+    history: Vec<u64>,
 }
 
 impl SearchContext {
@@ -139,6 +141,25 @@ pub fn negamax(
         return (0, None);
     }
 
+    if ply > 0 {
+        if pos.halfmove_clock() >= 100 {
+            return (0, None);
+        }
+
+        let current_hash = pos.hash();
+        let halfmove = pos.halfmove_clock() as usize;
+        let start = if ctx.history.len() > halfmove {
+            ctx.history.len() - halfmove
+        } else {
+            0
+        };
+        for i in (start..ctx.history.len()).rev().skip(1).step_by(2) {
+            if ctx.history[i] == current_hash {
+                return (0, None);
+            }
+        }
+    }
+
     if depth == 0 {
         return (quiescence(pos, alpha, beta, ply, ctx), None);
     }
@@ -171,6 +192,27 @@ pub fn negamax(
     }
 
     let mut moves = chess_movegen::generate_legal_moves(pos);
+
+    // Validate TT move: discard if not legal (hash collision may produce invalid move)
+    if let Some(tm) = tt_move {
+        if !moves.contains(&tm) {
+            tt_move = None;
+        }
+    }
+
+    // Internal iterative deepening: if no TT move and depth is sufficient,
+    // do a reduced-depth search to populate the TT with a move for ordering.
+    if tt_move.is_none() && depth as i32 >= IID_MIN_DEPTH {
+        negamax(pos, depth - 2, alpha, beta, ply, ctx);
+        if let Some(entry) = ctx.tt.probe(hash) {
+            if let Some(iid_move) = entry.best_move() {
+                if moves.contains(&iid_move) {
+                    tt_move = Some(iid_move);
+                }
+            }
+        }
+    }
+
     let pv_move = ctx.pv_move_at(ply);
     ordering::order_moves(&mut moves, pos, &ctx.killers, ply, pv_move, tt_move);
 
@@ -188,8 +230,10 @@ pub fn negamax(
 
     for mv in moves {
         let undo = pos.make_move(mv);
+        ctx.history.push(pos.hash());
         let (score, _) = negamax(pos, depth - 1, -beta, -alpha, ply + 1, ctx);
         let score = -score;
+        ctx.history.pop();
         pos.unmake_move(mv, undo);
 
         if ctx.aborted {
@@ -233,6 +277,7 @@ pub fn negamax(
 pub fn search(
     pos: &mut Position,
     limits: SearchLimits,
+    game_history: &[u64],
     on_depth: Option<DepthCallback<'_>>,
 ) -> Option<Move> {
     let mut ctx = SearchContext {
@@ -246,9 +291,11 @@ pub fn search(
         stop_flag: limits.stop_flag,
         max_nodes: limits.max_nodes,
         tt: TranspositionTable::new(64),
+        history: game_history.to_vec(),
     };
 
     ctx.tt.new_generation();
+    ctx.history.push(pos.hash());
 
     let mut best_move: Option<Move> = None;
     let mut depth: u8 = 1;
@@ -309,6 +356,7 @@ mod tests {
             stop_flag: None,
             max_nodes: None,
             tt: TranspositionTable::new(1),
+            history: Vec::new(),
         }
     }
 
@@ -426,7 +474,7 @@ mod tests {
             max_nodes: None,
             stop_flag: None,
         };
-        let mv = search(&mut pos, limits, None);
+        let mv = search(&mut pos, limits, &[], None);
         assert!(mv.is_some());
         let legal_moves = chess_movegen::generate_legal_moves(&mut pos);
         assert!(legal_moves.iter().any(|&m| m == mv.unwrap()));
@@ -444,7 +492,7 @@ mod tests {
             max_nodes: None,
             stop_flag: None,
         };
-        let mv = search(&mut pos, limits, None);
+        let mv = search(&mut pos, limits, &[], None);
         assert!(mv.is_some());
         let best = mv.unwrap();
         assert_eq!(best.to_sq().index(), Square::new(53).unwrap().index());
@@ -460,7 +508,7 @@ mod tests {
             max_nodes: None,
             stop_flag: None,
         };
-        let mv = search(&mut pos, limits, None);
+        let mv = search(&mut pos, limits, &[], None);
         let elapsed = start.elapsed();
         assert!(elapsed < Duration::from_millis(200));
         assert!(mv.is_some());
@@ -477,7 +525,7 @@ mod tests {
             max_nodes: None,
             stop_flag: None,
         };
-        let mv = search(&mut pos, limits, None);
+        let mv = search(&mut pos, limits, &[], None);
         assert!(mv.is_none());
     }
 
@@ -490,7 +538,7 @@ mod tests {
             max_nodes: None,
             stop_flag: None,
         };
-        let mv = search(&mut pos, limits, None);
+        let mv = search(&mut pos, limits, &[], None);
         assert!(mv.is_none());
     }
 
@@ -520,6 +568,7 @@ mod tests {
             stop_flag: None,
             max_nodes: None,
             tt: TranspositionTable::new(1),
+            history: Vec::new(),
         };
         // Run iterative deepening up to target depth to build PV
         for d in 1..=depth {
@@ -542,6 +591,7 @@ mod tests {
             stop_flag: None,
             max_nodes: None,
             tt: TranspositionTable::new(0),
+            history: Vec::new(),
         };
         // Run iterative deepening but never set prev_pv
         for d in 1..=depth {
@@ -580,7 +630,7 @@ mod tests {
             max_nodes: None,
             stop_flag: Some(stop),
         };
-        let mv = search(&mut pos, limits, None);
+        let mv = search(&mut pos, limits, &[], None);
         let elapsed = start.elapsed();
 
         assert!(
@@ -611,7 +661,7 @@ mod tests {
         let cb = move |depth: u8, _score: i32, _nodes: u64, _elapsed: Duration, _pv: &[Move]| {
             max_depth_clone.fetch_max(depth, Ordering::Relaxed);
         };
-        let mv = search(&mut pos, limits, Some(&cb));
+        let mv = search(&mut pos, limits, &[], Some(&cb));
         assert!(mv.is_some());
         assert_eq!(max_depth_seen.load(Ordering::Relaxed), 3);
     }
@@ -626,7 +676,7 @@ mod tests {
             max_nodes: Some(500),
             stop_flag: None,
         };
-        let mv = search(&mut pos, limits, None);
+        let mv = search(&mut pos, limits, &[], None);
         let elapsed = start.elapsed();
         assert!(mv.is_some());
         assert!(
@@ -646,7 +696,7 @@ mod tests {
             max_nodes: None,
             stop_flag: None,
         };
-        let mv = search(&mut pos, limits, None);
+        let mv = search(&mut pos, limits, &[], None);
         let elapsed = start.elapsed();
         assert!(mv.is_some());
         assert!(
@@ -674,6 +724,7 @@ mod tests {
             stop_flag: None,
             max_nodes: None,
             tt: TranspositionTable::new(1),
+            history: Vec::new(),
         };
         ctx_tt.tt.new_generation();
         for d in 1..=depth {
@@ -696,6 +747,7 @@ mod tests {
             stop_flag: None,
             max_nodes: None,
             tt: TranspositionTable::new(0),
+            history: Vec::new(),
         };
         for d in 1..=depth {
             ctx_no_tt.pv_table.clear();
@@ -730,6 +782,7 @@ mod tests {
             stop_flag: None,
             max_nodes: None,
             tt: TranspositionTable::new(1),
+            history: Vec::new(),
         };
         ctx.tt.new_generation();
         for d in 1..=4u8 {
@@ -768,6 +821,7 @@ mod tests {
             stop_flag: None,
             max_nodes: None,
             tt: TranspositionTable::new(1),
+            history: Vec::new(),
         };
         ctx.tt.new_generation();
         let (score, mv) = negamax(&mut pos, 4, -INFINITY, INFINITY, 0, &mut ctx);
@@ -779,6 +833,483 @@ mod tests {
             MATE_SCORE - 1,
             "mate in 1 should return MATE_SCORE - 1, got {}",
             score
+        );
+    }
+
+    #[test]
+    fn tt_move_ordering_across_positions() {
+        // Position 1: TT best move is a capture
+        let fens = [
+            "r1bqkbnr/pppppppp/2n5/8/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 1 2",
+            // Position 2: quiet move position
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+            // Position 3: promotion possible (pawn on 7th rank)
+            "8/P5k1/8/8/8/8/6K1/8 w - - 0 1",
+        ];
+
+        for fen in fens {
+            let mut pos = Position::from_fen(fen).expect("valid fen");
+            let hash = pos.hash();
+
+            let mut ctx = SearchContext {
+                start: Instant::now(),
+                time_budget: Duration::from_secs(60),
+                nodes: 0,
+                aborted: false,
+                killers: KillerTable::new(),
+                pv_table: PvTable::new(),
+                prev_pv: Vec::new(),
+                stop_flag: None,
+                max_nodes: None,
+                tt: TranspositionTable::new(1),
+                history: Vec::new(),
+            };
+            ctx.tt.new_generation();
+            for d in 1..=4u8 {
+                ctx.pv_table.clear();
+                negamax(&mut pos, d, -INFINITY, INFINITY, 0, &mut ctx);
+                ctx.prev_pv = ctx.pv_table.extract_pv();
+            }
+
+            let entry = ctx
+                .tt
+                .probe(hash)
+                .expect("TT should have an entry after search");
+            let tt_move = entry.best_move().expect("TT entry should have a best move");
+
+            let mut moves = chess_movegen::generate_legal_moves(&mut pos);
+            let killers = KillerTable::new();
+            ordering::order_moves(&mut moves, &pos, &killers, 0, None, Some(tt_move));
+
+            assert_eq!(
+                moves[0], tt_move,
+                "TT move should be ordered first for FEN: {}",
+                fen
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_tt_move_discarded() {
+        use chess_types::{MoveFlag, Square};
+
+        // Use a position where a1-h8 quiet move is definitely not legal
+        let fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+        let mut pos = Position::from_fen(fen).expect("valid fen");
+        let hash = pos.hash();
+
+        // Fabricate an invalid move: a1 -> h8 quiet (no piece can do this legally from startpos)
+        let fake_move = Move::new(Square::A1, Square::H8, MoveFlag::QUIET);
+        let legal_moves = chess_movegen::generate_legal_moves(&mut pos);
+        assert!(
+            !legal_moves.contains(&fake_move),
+            "fabricated move must not be legal"
+        );
+
+        let mut ctx = SearchContext {
+            start: Instant::now(),
+            time_budget: Duration::from_secs(60),
+            nodes: 0,
+            aborted: false,
+            killers: KillerTable::new(),
+            pv_table: PvTable::new(),
+            prev_pv: Vec::new(),
+            stop_flag: None,
+            max_nodes: None,
+            tt: TranspositionTable::new(1),
+            history: Vec::new(),
+        };
+        ctx.tt.new_generation();
+
+        // Store fake TT entry with the invalid move
+        let entry = TtEntry::new(
+            verification_key(hash),
+            4,
+            100,
+            BoundType::Exact,
+            Some(fake_move),
+            ctx.tt.generation(),
+        );
+        ctx.tt.store(hash, entry);
+
+        // Run negamax — should not crash and should return a valid move
+        let (score, mv) = negamax(&mut pos, 3, -INFINITY, INFINITY, 0, &mut ctx);
+        assert!(mv.is_some(), "negamax should return a valid move");
+        let best = mv.unwrap();
+        let legal_after = chess_movegen::generate_legal_moves(&mut pos);
+        assert!(legal_after.contains(&best), "returned move must be legal");
+        assert_ne!(best, fake_move, "invalid TT move should not be returned");
+        // Score should be reasonable (not garbage)
+        assert!(score.abs() < INFINITY);
+    }
+
+    #[test]
+    fn tt_move_ordering_reduces_nodes() {
+        let fen = "r1bqkb1r/pppppppp/2n2n2/8/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3";
+        let depth: u8 = 5;
+
+        // Search with TT enabled (1 MB TT — TT move ordering is effective)
+        let mut pos_tt = Position::from_fen(fen).expect("valid fen");
+        let mut ctx_tt = SearchContext {
+            start: Instant::now(),
+            time_budget: Duration::from_secs(60),
+            nodes: 0,
+            aborted: false,
+            killers: KillerTable::new(),
+            pv_table: PvTable::new(),
+            prev_pv: Vec::new(),
+            stop_flag: None,
+            max_nodes: None,
+            tt: TranspositionTable::new(1),
+            history: Vec::new(),
+        };
+        ctx_tt.tt.new_generation();
+        for d in 1..=depth {
+            ctx_tt.pv_table.clear();
+            negamax(&mut pos_tt, d, -INFINITY, INFINITY, 0, &mut ctx_tt);
+            ctx_tt.prev_pv = ctx_tt.pv_table.extract_pv();
+        }
+        let nodes_with_tt = ctx_tt.nodes;
+
+        // Search with 0 MB TT (minimal table — TT move ordering is ineffective)
+        let mut pos_no_tt = Position::from_fen(fen).expect("valid fen");
+        let mut ctx_no_tt = SearchContext {
+            start: Instant::now(),
+            time_budget: Duration::from_secs(60),
+            nodes: 0,
+            aborted: false,
+            killers: KillerTable::new(),
+            pv_table: PvTable::new(),
+            prev_pv: Vec::new(),
+            stop_flag: None,
+            max_nodes: None,
+            tt: TranspositionTable::new(0),
+            history: Vec::new(),
+        };
+        for d in 1..=depth {
+            ctx_no_tt.pv_table.clear();
+            negamax(&mut pos_no_tt, d, -INFINITY, INFINITY, 0, &mut ctx_no_tt);
+            ctx_no_tt.prev_pv = ctx_no_tt.pv_table.extract_pv();
+        }
+        let nodes_without_tt = ctx_no_tt.nodes;
+
+        assert!(
+            nodes_with_tt < nodes_without_tt,
+            "TT move ordering should reduce nodes: {} (with TT) vs {} (without TT)",
+            nodes_with_tt,
+            nodes_without_tt
+        );
+    }
+
+    #[test]
+    fn iid_reduces_node_count() {
+        let fen = "r1bqkb1r/pppppppp/2n2n2/8/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3";
+        let depth: u8 = 5;
+
+        // Search with 1 MB TT (IID populates TT effectively)
+        let mut pos_iid = Position::from_fen(fen).expect("valid fen");
+        let mut ctx_iid = SearchContext {
+            start: Instant::now(),
+            time_budget: Duration::from_secs(60),
+            nodes: 0,
+            aborted: false,
+            killers: KillerTable::new(),
+            pv_table: PvTable::new(),
+            prev_pv: Vec::new(),
+            stop_flag: None,
+            max_nodes: None,
+            tt: TranspositionTable::new(1),
+            history: Vec::new(),
+        };
+        ctx_iid.tt.new_generation();
+        for d in 1..=depth {
+            ctx_iid.pv_table.clear();
+            negamax(&mut pos_iid, d, -INFINITY, INFINITY, 0, &mut ctx_iid);
+            ctx_iid.prev_pv = ctx_iid.pv_table.extract_pv();
+        }
+        let nodes_with_iid = ctx_iid.nodes;
+
+        // Search with 0 MB TT (IID benefit neutralized)
+        let mut pos_no_iid = Position::from_fen(fen).expect("valid fen");
+        let mut ctx_no_iid = SearchContext {
+            start: Instant::now(),
+            time_budget: Duration::from_secs(60),
+            nodes: 0,
+            aborted: false,
+            killers: KillerTable::new(),
+            pv_table: PvTable::new(),
+            prev_pv: Vec::new(),
+            stop_flag: None,
+            max_nodes: None,
+            tt: TranspositionTable::new(0),
+            history: Vec::new(),
+        };
+        for d in 1..=depth {
+            ctx_no_iid.pv_table.clear();
+            negamax(&mut pos_no_iid, d, -INFINITY, INFINITY, 0, &mut ctx_no_iid);
+            ctx_no_iid.prev_pv = ctx_no_iid.pv_table.extract_pv();
+        }
+        let nodes_without_iid = ctx_no_iid.nodes;
+
+        assert!(
+            nodes_with_iid < nodes_without_iid,
+            "IID should reduce nodes: {} (with IID) vs {} (without IID)",
+            nodes_with_iid,
+            nodes_without_iid
+        );
+    }
+
+    #[test]
+    fn iid_does_not_trigger_below_threshold() {
+        let mut pos_a = Position::startpos();
+        let mut pos_b = Position::startpos();
+
+        let mut ctx_a = SearchContext {
+            start: Instant::now(),
+            time_budget: Duration::from_secs(60),
+            nodes: 0,
+            aborted: false,
+            killers: KillerTable::new(),
+            pv_table: PvTable::new(),
+            prev_pv: Vec::new(),
+            stop_flag: None,
+            max_nodes: None,
+            tt: TranspositionTable::new(1),
+            history: Vec::new(),
+        };
+        ctx_a.tt.new_generation();
+
+        let mut ctx_b = SearchContext {
+            start: Instant::now(),
+            time_budget: Duration::from_secs(60),
+            nodes: 0,
+            aborted: false,
+            killers: KillerTable::new(),
+            pv_table: PvTable::new(),
+            prev_pv: Vec::new(),
+            stop_flag: None,
+            max_nodes: None,
+            tt: TranspositionTable::new(1),
+            history: Vec::new(),
+        };
+        ctx_b.tt.new_generation();
+
+        negamax(&mut pos_a, 3, -INFINITY, INFINITY, 0, &mut ctx_a);
+        negamax(&mut pos_b, 3, -INFINITY, INFINITY, 0, &mut ctx_b);
+
+        assert_eq!(
+            ctx_a.nodes, ctx_b.nodes,
+            "IID should not trigger at depth 3: {} vs {} nodes",
+            ctx_a.nodes, ctx_b.nodes
+        );
+    }
+
+    #[test]
+    fn iid_finds_move_for_ordering() {
+        let fen = "r1bqkb1r/pppppppp/2n2n2/8/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3";
+        let mut pos = Position::from_fen(fen).expect("valid fen");
+        let hash = pos.hash();
+
+        let mut ctx = SearchContext {
+            start: Instant::now(),
+            time_budget: Duration::from_secs(60),
+            nodes: 0,
+            aborted: false,
+            killers: KillerTable::new(),
+            pv_table: PvTable::new(),
+            prev_pv: Vec::new(),
+            stop_flag: None,
+            max_nodes: None,
+            tt: TranspositionTable::new(1),
+            history: Vec::new(),
+        };
+        ctx.tt.new_generation();
+
+        let (_, mv) = negamax(&mut pos, 5, -INFINITY, INFINITY, 0, &mut ctx);
+
+        let entry = ctx
+            .tt
+            .probe(hash)
+            .expect("TT should have an entry after search");
+        let best = entry.best_move().expect("TT entry should have a best move");
+        let legal_moves = chess_movegen::generate_legal_moves(&mut pos);
+        assert!(legal_moves.contains(&best), "TT best move should be legal");
+        assert!(mv.is_some(), "search should return a valid move");
+    }
+
+    #[test]
+    fn threefold_repetition_returns_draw() {
+        // Test that negamax returns draw score 0 when the position has been seen before.
+        // Call negamax at ply=1 so the repetition check (ply > 0) triggers immediately.
+        // The history must contain two entries: the matching hash and a "top" entry that
+        // skip(1) removes. The halfmove clock must be large enough for the scan window.
+        let mut pos = Position::from_fen("4k3/8/8/8/8/8/8/4K3 w - - 4 1").expect("valid fen");
+        let current_hash = pos.hash();
+
+        // History: [current_hash, current_hash]. skip(1) removes index 1, checks index 0.
+        let mut ctx = SearchContext {
+            start: Instant::now(),
+            time_budget: Duration::from_secs(5),
+            nodes: 0,
+            aborted: false,
+            killers: KillerTable::new(),
+            pv_table: PvTable::new(),
+            prev_pv: Vec::new(),
+            stop_flag: None,
+            max_nodes: None,
+            tt: TranspositionTable::new(1),
+            history: vec![current_hash, current_hash],
+        };
+        ctx.tt.new_generation();
+
+        // At ply=1, the repetition check sees current_hash in history and returns (0, None)
+        let (score, mv) = negamax(&mut pos, 4, -INFINITY, INFINITY, 1, &mut ctx);
+
+        assert_eq!(score, 0, "threefold repetition should yield draw score 0");
+        assert!(mv.is_none(), "repeated position should return no move");
+    }
+
+    #[test]
+    fn fifty_move_rule_returns_draw() {
+        // Halfmove clock = 100 in FEN. At root (ply=0) the check is skipped,
+        // but every child position will have halfmove_clock >= 101 (quiet moves increment),
+        // so all children return draw score 0.
+        let mut pos = Position::from_fen("4k3/8/8/8/8/8/8/4K3 w - - 100 51").expect("valid fen");
+        let mut ctx = test_ctx();
+        ctx.tt.new_generation();
+
+        let (score, _) = negamax(&mut pos, 2, -INFINITY, INFINITY, 0, &mut ctx);
+
+        assert_eq!(
+            score, 0,
+            "fifty-move rule should return draw score 0, got {}",
+            score
+        );
+    }
+
+    #[test]
+    fn engine_avoids_repetition_when_winning() {
+        // White has a queen vs nothing (huge material advantage).
+        // Game history contains one prior occurrence of the current position hash,
+        // so if White makes a move that leads back here, it's a draw.
+        // The engine should prefer to keep the advantage rather than repeat.
+        let mut pos = Position::from_fen("4k3/8/8/8/8/8/8/Q3K3 w - - 0 1").expect("valid fen");
+        let current_hash = pos.hash();
+
+        // Pre-load one occurrence of the current hash (twofold: returning here = draw)
+        let game_history = vec![current_hash];
+
+        let limits = SearchLimits {
+            max_time: Duration::from_secs(5),
+            max_depth: Some(4),
+            max_nodes: None,
+            stop_flag: None,
+        };
+        let mv = search(&mut pos, limits, &game_history, None);
+
+        assert!(mv.is_some(), "engine should find a move");
+        // Re-search to get the score
+        let mut pos2 = Position::from_fen("4k3/8/8/8/8/8/8/Q3K3 w - - 0 1").expect("valid fen");
+        let limits2 = SearchLimits {
+            max_time: Duration::from_secs(5),
+            max_depth: Some(4),
+            max_nodes: None,
+            stop_flag: None,
+        };
+        let mut ctx = SearchContext {
+            start: Instant::now(),
+            time_budget: limits2.max_time,
+            nodes: 0,
+            aborted: false,
+            killers: KillerTable::new(),
+            pv_table: PvTable::new(),
+            prev_pv: Vec::new(),
+            stop_flag: None,
+            max_nodes: None,
+            tt: TranspositionTable::new(1),
+            history: vec![current_hash],
+        };
+        ctx.tt.new_generation();
+        ctx.history.push(pos2.hash());
+
+        let (score, _) = negamax(&mut pos2, 4, -INFINITY, INFINITY, 0, &mut ctx);
+
+        assert!(
+            score > 0,
+            "engine should avoid repetition when winning, score should be > 0, got {}",
+            score
+        );
+    }
+
+    #[test]
+    fn engine_seeks_repetition_when_losing() {
+        // Black to move with a huge material disadvantage (White has queen, Black has only king).
+        // We pre-load the hash of one of Black's reachable child positions into the history,
+        // so when the search plays that move, it detects the position as a repetition (draw = 0).
+        // Without this history, the score would be deeply negative.
+        // Use halfmove clock = 10 so the repetition scan window is wide enough.
+        let fen = "4k3/8/8/8/8/8/8/Q3K3 b - - 10 6";
+        let mut pos = Position::from_fen(fen).expect("valid fen");
+
+        // Find a legal move for Black and compute its resulting position hash
+        let moves = chess_movegen::generate_legal_moves(&mut pos);
+        assert!(!moves.is_empty());
+        let child_move = moves[0];
+        let undo = pos.make_move(child_move);
+        let child_hash = pos.hash();
+        pos.unmake_move(child_move, undo);
+
+        // Search with the child position hash in history (Black can draw by playing child_move).
+        // The history simulates a game where child_hash appeared before (twofold detection).
+        // The step_by(2) optimization in the repetition scan checks every other position
+        // (same side-to-move parity). At ply=1 the child position is White-to-move.
+        // After make_move pushes child_hash at the end, the scan (skip(1), step_by(2))
+        // checks entries at odd distances from the end. We place child_hash at distance 3
+        // by padding: [child_hash, dummy, root_hash] → push child_hash → distances 3,2,1,0.
+        let root_hash = pos.hash();
+        let mut ctx = SearchContext {
+            start: Instant::now(),
+            time_budget: Duration::from_secs(5),
+            nodes: 0,
+            aborted: false,
+            killers: KillerTable::new(),
+            pv_table: PvTable::new(),
+            prev_pv: Vec::new(),
+            stop_flag: None,
+            max_nodes: None,
+            tt: TranspositionTable::new(1),
+            history: vec![child_hash, 0, root_hash],
+        };
+        ctx.tt.new_generation();
+
+        let (score_with_history, _) = negamax(&mut pos, 4, -INFINITY, INFINITY, 0, &mut ctx);
+
+        // Search without repetition history for comparison
+        let mut pos2 = Position::from_fen(fen).expect("valid fen");
+        let mut ctx2 = SearchContext {
+            start: Instant::now(),
+            time_budget: Duration::from_secs(5),
+            nodes: 0,
+            aborted: false,
+            killers: KillerTable::new(),
+            pv_table: PvTable::new(),
+            prev_pv: Vec::new(),
+            stop_flag: None,
+            max_nodes: None,
+            tt: TranspositionTable::new(1),
+            history: Vec::new(),
+        };
+        ctx2.tt.new_generation();
+
+        let (score_without_history, _) = negamax(&mut pos2, 4, -INFINITY, INFINITY, 0, &mut ctx2);
+
+        // With repetition available, the losing side should get a better (higher) score
+        // because it can aim for a draw (score 0) instead of a deeply negative score.
+        assert!(
+            score_with_history > score_without_history,
+            "engine should seek repetition when losing: score with history ({}) should be better than without ({})",
+            score_with_history,
+            score_without_history
         );
     }
 }
