@@ -1,11 +1,11 @@
 use chess_board::Position;
 use chess_types::{Color, Piece, PieceKind};
 
-pub const PAWN_VALUE: i32 = 100;
-pub const KNIGHT_VALUE: i32 = 320;
-pub const BISHOP_VALUE: i32 = 330;
-pub const ROOK_VALUE: i32 = 500;
-pub const QUEEN_VALUE: i32 = 900;
+pub const PAWN_VALUE: i32 = 93;
+pub const KNIGHT_VALUE: i32 = 316;
+pub const BISHOP_VALUE: i32 = 344;
+pub const ROOK_VALUE: i32 = 510;
+pub const QUEEN_VALUE: i32 = 936;
 
 pub fn piece_value(kind: PieceKind) -> i32 {
     match kind {

@@ -2,21 +2,21 @@ use chess_board::zobrist::piece_square_key;
 use chess_board::Position;
 use chess_types::{Bitboard, Color, Piece, PieceKind, Square};
 
-const DOUBLED_PAWN_PENALTY_MG: i32 = -10;
-const DOUBLED_PAWN_PENALTY_EG: i32 = -20;
-const ISOLATED_PAWN_PENALTY_MG: i32 = -15;
-const ISOLATED_PAWN_PENALTY_EG: i32 = -20;
-const BACKWARD_PAWN_PENALTY_MG: i32 = -10;
-const BACKWARD_PAWN_PENALTY_EG: i32 = -15;
-const PASSED_PAWN_BONUS_MG: [i32; 8] = [0, 0, 5, 10, 20, 35, 60, 0];
-const PASSED_PAWN_BONUS_EG: [i32; 8] = [0, 0, 10, 20, 40, 70, 120, 0];
-const CONNECTED_PAWN_BONUS_MG: i32 = 5;
-const CONNECTED_PAWN_BONUS_EG: i32 = 7;
+const DOUBLED_PAWN_PENALTY_MG: i32 = -8;
+const DOUBLED_PAWN_PENALTY_EG: i32 = -22;
+const ISOLATED_PAWN_PENALTY_MG: i32 = -12;
+const ISOLATED_PAWN_PENALTY_EG: i32 = -18;
+const BACKWARD_PAWN_PENALTY_MG: i32 = -8;
+const BACKWARD_PAWN_PENALTY_EG: i32 = -13;
+const PASSED_PAWN_BONUS_MG: [i32; 8] = [0, 0, 7, 12, 23, 38, 65, 0];
+const PASSED_PAWN_BONUS_EG: [i32; 8] = [0, 0, 13, 25, 47, 78, 131, 0];
+const CONNECTED_PAWN_BONUS_MG: i32 = 7;
+const CONNECTED_PAWN_BONUS_EG: i32 = 9;
 
-const KING_PROXIMITY_OWN_BONUS: i32 = 5;
-const KING_PROXIMITY_OPP_BONUS: i32 = 3;
-const BLOCKED_PASSED_PAWN_PENALTY_MG: i32 = -5;
-const BLOCKED_PASSED_PAWN_PENALTY_EG: i32 = -10;
+const KING_PROXIMITY_OWN_BONUS: i32 = 6;
+const KING_PROXIMITY_OPP_BONUS: i32 = 4;
+const BLOCKED_PASSED_PAWN_PENALTY_MG: i32 = -7;
+const BLOCKED_PASSED_PAWN_PENALTY_EG: i32 = -12;
 
 const NOT_A_FILE: Bitboard = Bitboard::new(0xFEFE_FEFE_FEFE_FEFE);
 const NOT_H_FILE: Bitboard = Bitboard::new(0x7F7F_7F7F_7F7F_7F7F);
