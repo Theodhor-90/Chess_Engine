@@ -1,0 +1,1 @@
+The review is already complete. The structured output has been provided with the verdict `needs_revision` due to the `mate_score_correct_with_tt` test using an invalid chess position (the queen is unprotected so Black can capture it — it's not actually checkmate).

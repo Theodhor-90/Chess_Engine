@@ -1,0 +1,2 @@
+- **`crates/search/src/tt.rs`** — Created. `BoundType` enum (`Exact`, `LowerBound`, `UpperBound`) with `TryFrom<u8>`. `TtEntry` struct with `key`, `depth`, `score`, `bound`, `best_move`, `age` fields, constructor, accessors, `Default` impl. `verification_key` free function. 9 unit tests covering round-trips, all bound variants, `TryFrom` valid/invalid, default entry, and key extraction.
+- **`crates/search/src/lib.rs`** — Added `pub mod tt;` after `pub mod pv_table;`.
