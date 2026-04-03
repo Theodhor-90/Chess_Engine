@@ -1,0 +1,34 @@
+# lichess-bot configuration for the chess engine
+# See https://github.com/lichess-bot-devs/lichess-bot for full documentation.
+
+# Lichess API token with bot:play scope.
+# Set via the LICHESS_BOT_TOKEN environment variable, or replace the placeholder below.
+token: "xxxxxxxxxxxxxxxxxxxxxxxx"
+
+engine:
+  dir: "./"
+  name: "engine"
+  protocol: "uci"
+  uci_options:
+    EvalFile: "nn.nnue"
+    EvalMode: "nnue"
+    BookFile: ""
+    SyzygyPath: ""
+
+challenge:
+  concurrency: 1
+  sort_by: "best"
+  accept_bot: true
+  accept_human: true
+  min_rating: 0
+  max_rating: 4000
+  variants:
+    - standard
+  time_controls:
+    - bullet
+    - blitz
+    - rapid
+    - classical
+  modes:
+    - casual
+    - rated
