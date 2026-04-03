@@ -101,3 +101,57 @@ jobs:
         with:
           name: engine-${{ matrix.target }}-${{ matrix.simd }}
           path: target/${{ matrix.target }}/release/engine.exe
+
+  package:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Package archives
+        run: |
+          mkdir -p dist/
+          for dir in artifacts/engine-*; do
+            artifact_name=$(basename "$dir")
+            # Extract target and simd from artifact name: engine-<target>-simd-<level>
+            # e.g., engine-x86_64-unknown-linux-gnu-simd-avx2
+            target=$(echo "$artifact_name" | sed 's/^engine-//' | sed 's/-simd-[a-z0-9]*$//')
+            simd_level=$(echo "$artifact_name" | sed 's/.*simd-//')
+            archive_base="chess-engine-${target}-${simd_level}"
+
+            if echo "$target" | grep -q "windows"; then
+              # Windows: create .zip with engine.exe and nn.nnue
+              cp "$dir/engine.exe" .
+              cp nets/nn.nnue .
+              zip "dist/${archive_base}.zip" engine.exe nn.nnue
+              rm engine.exe nn.nnue
+            else
+              # Unix: create .tar.gz with engine and nn.nnue
+              cp "$dir/engine" .
+              chmod +x engine
+              cp nets/nn.nnue .
+              tar czf "dist/${archive_base}.tar.gz" engine nn.nnue
+              rm engine nn.nnue
+            fi
+          done
+          echo "Archives created:"
+          ls -la dist/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          files: dist/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
