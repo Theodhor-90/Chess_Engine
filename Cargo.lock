@@ -54,6 +54,7 @@ name = "chess-nnue"
 version = "0.1.0"
 dependencies = [
  "chess-board",
+ "chess-movegen",
  "chess-types",
  "thiserror 2.0.18",
 ]

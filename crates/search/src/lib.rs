@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
-use chess_nnue::{Accumulator, Network};
+use chess_nnue::{AccumulatorStack, Network};
 
 use chess_board::Position;
 use chess_types::{Color, Move, Piece, PieceKind, Square};
@@ -81,7 +81,7 @@ pub struct SearchContext {
     pawn_table: chess_eval::PawnHashTable,
     network: Option<Arc<Network>>,
     eval_mode: EvalMode,
-    accumulator: Accumulator,
+    acc_stack: AccumulatorStack,
     pub(crate) lmr_enabled: bool,
     pub(crate) futility_enabled: bool,
     pub(crate) check_extension_enabled: bool,
@@ -140,8 +140,7 @@ fn king_square(pos: &Position, side: Color) -> Square {
 fn eval_position(pos: &Position, ctx: &mut SearchContext) -> i32 {
     if ctx.eval_mode == EvalMode::Nnue {
         if let Some(ref network) = ctx.network {
-            ctx.accumulator.refresh(pos, network);
-            return chess_nnue::forward(&ctx.accumulator, network, pos.side_to_move());
+            return ctx.acc_stack.evaluate(pos, network, pos.side_to_move());
         }
     }
     chess_eval::evaluate(pos, &mut ctx.pawn_table)
@@ -191,7 +190,13 @@ pub fn quiescence(
     );
     for mv in tactical {
         let undo = pos.make_move(mv);
+        if let Some(ref network) = ctx.network {
+            ctx.acc_stack.push_move(pos, mv, undo.captured, network);
+        }
         let score = -quiescence(pos, -beta, -alpha, ply + 1, ctx);
+        if ctx.network.is_some() {
+            ctx.acc_stack.pop();
+        }
         pos.unmake_move(mv, undo);
 
         if ctx.aborted {
@@ -477,6 +482,9 @@ pub fn negamax(
         };
 
         let undo = pos.make_move(mv);
+        if let Some(ref network) = ctx.network {
+            ctx.acc_stack.push_move(pos, mv, undo.captured, network);
+        }
         ctx.history.push(pos.hash());
 
         let is_tt_move = tt_move == Some(mv);
@@ -499,6 +507,9 @@ pub fn negamax(
             let margin = FUTILITY_MARGINS[depth as usize];
             if static_eval + margin <= alpha {
                 ctx.history.pop();
+                if ctx.network.is_some() {
+                    ctx.acc_stack.pop();
+                }
                 pos.unmake_move(mv, undo);
                 continue;
             }
@@ -514,6 +525,9 @@ pub fn negamax(
             && see_score < 0
         {
             ctx.history.pop();
+            if ctx.network.is_some() {
+                ctx.acc_stack.pop();
+            }
             pos.unmake_move(mv, undo);
             continue;
         }
@@ -638,6 +652,9 @@ pub fn negamax(
         }
 
         ctx.history.pop();
+        if ctx.network.is_some() {
+            ctx.acc_stack.pop();
+        }
         pos.unmake_move(mv, undo);
 
         if ctx.aborted {
@@ -722,12 +739,16 @@ pub fn search(
         pawn_table: chess_eval::PawnHashTable::new(),
         network,
         eval_mode,
-        accumulator: Accumulator::new(),
+        acc_stack: AccumulatorStack::new(),
         lmr_enabled: true,
         futility_enabled: true,
         check_extension_enabled: true,
         singular_extension_enabled: true,
     };
+
+    if let Some(ref network) = ctx.network {
+        ctx.acc_stack.refresh_if_needed(pos, network);
+    }
 
     ctx.tt.new_generation();
     ctx.history.push(pos.hash());
@@ -895,7 +916,7 @@ mod tests {
             pawn_table: chess_eval::PawnHashTable::new(),
             network: None,
             eval_mode: EvalMode::Classical,
-            accumulator: Accumulator::new(),
+            acc_stack: AccumulatorStack::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -1133,7 +1154,7 @@ mod tests {
             pawn_table: chess_eval::PawnHashTable::new(),
             network: None,
             eval_mode: EvalMode::Classical,
-            accumulator: Accumulator::new(),
+            acc_stack: AccumulatorStack::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -1177,7 +1198,7 @@ mod tests {
             pawn_table: chess_eval::PawnHashTable::new(),
             network: None,
             eval_mode: EvalMode::Classical,
-            accumulator: Accumulator::new(),
+            acc_stack: AccumulatorStack::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -1339,7 +1360,7 @@ mod tests {
             pawn_table: chess_eval::PawnHashTable::new(),
             network: None,
             eval_mode: EvalMode::Classical,
-            accumulator: Accumulator::new(),
+            acc_stack: AccumulatorStack::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -1383,7 +1404,7 @@ mod tests {
             pawn_table: chess_eval::PawnHashTable::new(),
             network: None,
             eval_mode: EvalMode::Classical,
-            accumulator: Accumulator::new(),
+            acc_stack: AccumulatorStack::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -1439,7 +1460,7 @@ mod tests {
             pawn_table: chess_eval::PawnHashTable::new(),
             network: None,
             eval_mode: EvalMode::Classical,
-            accumulator: Accumulator::new(),
+            acc_stack: AccumulatorStack::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -1503,7 +1524,7 @@ mod tests {
             pawn_table: chess_eval::PawnHashTable::new(),
             network: None,
             eval_mode: EvalMode::Classical,
-            accumulator: Accumulator::new(),
+            acc_stack: AccumulatorStack::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -1556,7 +1577,7 @@ mod tests {
                 pawn_table: chess_eval::PawnHashTable::new(),
                 network: None,
                 eval_mode: EvalMode::Classical,
-                accumulator: Accumulator::new(),
+                acc_stack: AccumulatorStack::new(),
                 lmr_enabled: true,
                 futility_enabled: true,
                 check_extension_enabled: true,
@@ -1636,7 +1657,7 @@ mod tests {
             pawn_table: chess_eval::PawnHashTable::new(),
             network: None,
             eval_mode: EvalMode::Classical,
-            accumulator: Accumulator::new(),
+            acc_stack: AccumulatorStack::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -1692,7 +1713,7 @@ mod tests {
             pawn_table: chess_eval::PawnHashTable::new(),
             network: None,
             eval_mode: EvalMode::Classical,
-            accumulator: Accumulator::new(),
+            acc_stack: AccumulatorStack::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -1736,7 +1757,7 @@ mod tests {
             pawn_table: chess_eval::PawnHashTable::new(),
             network: None,
             eval_mode: EvalMode::Classical,
-            accumulator: Accumulator::new(),
+            acc_stack: AccumulatorStack::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -1792,7 +1813,7 @@ mod tests {
             pawn_table: chess_eval::PawnHashTable::new(),
             network: None,
             eval_mode: EvalMode::Classical,
-            accumulator: Accumulator::new(),
+            acc_stack: AccumulatorStack::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -1836,7 +1857,7 @@ mod tests {
             pawn_table: chess_eval::PawnHashTable::new(),
             network: None,
             eval_mode: EvalMode::Classical,
-            accumulator: Accumulator::new(),
+            acc_stack: AccumulatorStack::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -1890,7 +1911,7 @@ mod tests {
             pawn_table: chess_eval::PawnHashTable::new(),
             network: None,
             eval_mode: EvalMode::Classical,
-            accumulator: Accumulator::new(),
+            acc_stack: AccumulatorStack::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -1915,7 +1936,7 @@ mod tests {
             pawn_table: chess_eval::PawnHashTable::new(),
             network: None,
             eval_mode: EvalMode::Classical,
-            accumulator: Accumulator::new(),
+            acc_stack: AccumulatorStack::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -1960,7 +1981,7 @@ mod tests {
             pawn_table: chess_eval::PawnHashTable::new(),
             network: None,
             eval_mode: EvalMode::Classical,
-            accumulator: Accumulator::new(),
+            acc_stack: AccumulatorStack::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -2009,7 +2030,7 @@ mod tests {
             pawn_table: chess_eval::PawnHashTable::new(),
             network: None,
             eval_mode: EvalMode::Classical,
-            accumulator: Accumulator::new(),
+            acc_stack: AccumulatorStack::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -2100,7 +2121,7 @@ mod tests {
             pawn_table: chess_eval::PawnHashTable::new(),
             network: None,
             eval_mode: EvalMode::Classical,
-            accumulator: Accumulator::new(),
+            acc_stack: AccumulatorStack::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -2163,7 +2184,7 @@ mod tests {
             pawn_table: chess_eval::PawnHashTable::new(),
             network: None,
             eval_mode: EvalMode::Classical,
-            accumulator: Accumulator::new(),
+            acc_stack: AccumulatorStack::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -2194,7 +2215,7 @@ mod tests {
             pawn_table: chess_eval::PawnHashTable::new(),
             network: None,
             eval_mode: EvalMode::Classical,
-            accumulator: Accumulator::new(),
+            acc_stack: AccumulatorStack::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -2246,7 +2267,7 @@ mod tests {
             pawn_table: chess_eval::PawnHashTable::new(),
             network: None,
             eval_mode: EvalMode::Classical,
-            accumulator: Accumulator::new(),
+            acc_stack: AccumulatorStack::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -2286,7 +2307,7 @@ mod tests {
             pawn_table: chess_eval::PawnHashTable::new(),
             network: None,
             eval_mode: EvalMode::Classical,
-            accumulator: Accumulator::new(),
+            acc_stack: AccumulatorStack::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -2341,7 +2362,7 @@ mod tests {
             pawn_table: chess_eval::PawnHashTable::new(),
             network: None,
             eval_mode: EvalMode::Classical,
-            accumulator: Accumulator::new(),
+            acc_stack: AccumulatorStack::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -2371,7 +2392,7 @@ mod tests {
             pawn_table: chess_eval::PawnHashTable::new(),
             network: None,
             eval_mode: EvalMode::Classical,
-            accumulator: Accumulator::new(),
+            acc_stack: AccumulatorStack::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -2415,7 +2436,7 @@ mod tests {
             pawn_table: chess_eval::PawnHashTable::new(),
             network: None,
             eval_mode: EvalMode::Classical,
-            accumulator: Accumulator::new(),
+            acc_stack: AccumulatorStack::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -2445,7 +2466,7 @@ mod tests {
             pawn_table: chess_eval::PawnHashTable::new(),
             network: None,
             eval_mode: EvalMode::Classical,
-            accumulator: Accumulator::new(),
+            acc_stack: AccumulatorStack::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -2489,7 +2510,7 @@ mod tests {
             pawn_table: chess_eval::PawnHashTable::new(),
             network: None,
             eval_mode: EvalMode::Classical,
-            accumulator: Accumulator::new(),
+            acc_stack: AccumulatorStack::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -2519,7 +2540,7 @@ mod tests {
             pawn_table: chess_eval::PawnHashTable::new(),
             network: None,
             eval_mode: EvalMode::Classical,
-            accumulator: Accumulator::new(),
+            acc_stack: AccumulatorStack::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -2618,7 +2639,7 @@ mod tests {
                 pawn_table: chess_eval::PawnHashTable::new(),
                 network: None,
                 eval_mode: EvalMode::Classical,
-                accumulator: Accumulator::new(),
+                acc_stack: AccumulatorStack::new(),
                 lmr_enabled: true,
                 futility_enabled: true,
                 check_extension_enabled: true,
@@ -2662,7 +2683,7 @@ mod tests {
                 pawn_table: chess_eval::PawnHashTable::new(),
                 network: None,
                 eval_mode: EvalMode::Classical,
-                accumulator: Accumulator::new(),
+                acc_stack: AccumulatorStack::new(),
                 lmr_enabled: false,
                 futility_enabled: true,
                 check_extension_enabled: true,
@@ -2746,7 +2767,7 @@ mod tests {
                 pawn_table: chess_eval::PawnHashTable::new(),
                 network: None,
                 eval_mode: EvalMode::Classical,
-                accumulator: Accumulator::new(),
+                acc_stack: AccumulatorStack::new(),
                 lmr_enabled: false,
                 futility_enabled: true,
                 check_extension_enabled: true,
@@ -2832,7 +2853,7 @@ mod tests {
             pawn_table: chess_eval::PawnHashTable::new(),
             network: None,
             eval_mode: EvalMode::Classical,
-            accumulator: Accumulator::new(),
+            acc_stack: AccumulatorStack::new(),
             lmr_enabled: false,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -2875,7 +2896,7 @@ mod tests {
             pawn_table: chess_eval::PawnHashTable::new(),
             network: None,
             eval_mode: EvalMode::Classical,
-            accumulator: Accumulator::new(),
+            acc_stack: AccumulatorStack::new(),
             lmr_enabled: false,
             futility_enabled: false,
             check_extension_enabled: true,
@@ -2933,7 +2954,7 @@ mod tests {
             pawn_table: chess_eval::PawnHashTable::new(),
             network: None,
             eval_mode: EvalMode::Classical,
-            accumulator: Accumulator::new(),
+            acc_stack: AccumulatorStack::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -2973,7 +2994,7 @@ mod tests {
             pawn_table: chess_eval::PawnHashTable::new(),
             network: None,
             eval_mode: EvalMode::Classical,
-            accumulator: Accumulator::new(),
+            acc_stack: AccumulatorStack::new(),
             lmr_enabled: true,
             futility_enabled: false,
             check_extension_enabled: true,
@@ -3027,7 +3048,7 @@ mod tests {
             pawn_table: chess_eval::PawnHashTable::new(),
             network: None,
             eval_mode: EvalMode::Classical,
-            accumulator: Accumulator::new(),
+            acc_stack: AccumulatorStack::new(),
             lmr_enabled: false,
             futility_enabled: true,
             check_extension_enabled: false,
@@ -3072,7 +3093,7 @@ mod tests {
                 pawn_table: chess_eval::PawnHashTable::new(),
                 network: None,
                 eval_mode: EvalMode::Classical,
-                accumulator: Accumulator::new(),
+                acc_stack: AccumulatorStack::new(),
                 lmr_enabled: false,
                 futility_enabled: false,
                 check_extension_enabled: false,
@@ -3119,7 +3140,7 @@ mod tests {
                 pawn_table: chess_eval::PawnHashTable::new(),
                 network: None,
                 eval_mode: EvalMode::Classical,
-                accumulator: Accumulator::new(),
+                acc_stack: AccumulatorStack::new(),
                 lmr_enabled: false,
                 futility_enabled: true,
                 check_extension_enabled: false,
@@ -3158,7 +3179,7 @@ mod tests {
                 pawn_table: chess_eval::PawnHashTable::new(),
                 network: None,
                 eval_mode: EvalMode::Classical,
-                accumulator: Accumulator::new(),
+                acc_stack: AccumulatorStack::new(),
                 lmr_enabled: false,
                 futility_enabled: false,
                 check_extension_enabled: false,
@@ -3268,7 +3289,7 @@ mod tests {
                 pawn_table: chess_eval::PawnHashTable::new(),
                 network: None,
                 eval_mode: EvalMode::Classical,
-                accumulator: Accumulator::new(),
+                acc_stack: AccumulatorStack::new(),
                 lmr_enabled: true,
                 futility_enabled: true,
                 check_extension_enabled: true,
@@ -3321,7 +3342,7 @@ mod tests {
                 pawn_table: chess_eval::PawnHashTable::new(),
                 network: None,
                 eval_mode: EvalMode::Classical,
-                accumulator: Accumulator::new(),
+                acc_stack: AccumulatorStack::new(),
                 lmr_enabled: true,
                 futility_enabled: false,
                 check_extension_enabled: true,
@@ -3391,7 +3412,7 @@ mod tests {
             pawn_table: chess_eval::PawnHashTable::new(),
             network: None,
             eval_mode: EvalMode::Classical,
-            accumulator: Accumulator::new(),
+            acc_stack: AccumulatorStack::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -3436,7 +3457,7 @@ mod tests {
             pawn_table: chess_eval::PawnHashTable::new(),
             network: None,
             eval_mode: EvalMode::Classical,
-            accumulator: Accumulator::new(),
+            acc_stack: AccumulatorStack::new(),
             lmr_enabled: true,
             futility_enabled: false,
             check_extension_enabled: true,
@@ -3479,7 +3500,7 @@ mod tests {
             pawn_table: chess_eval::PawnHashTable::new(),
             network: None,
             eval_mode: EvalMode::Classical,
-            accumulator: Accumulator::new(),
+            acc_stack: AccumulatorStack::new(),
             lmr_enabled: false,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -3532,7 +3553,7 @@ mod tests {
                 pawn_table: chess_eval::PawnHashTable::new(),
                 network: None,
                 eval_mode: EvalMode::Classical,
-                accumulator: Accumulator::new(),
+                acc_stack: AccumulatorStack::new(),
                 lmr_enabled: true,
                 futility_enabled: true,
                 check_extension_enabled: true,
@@ -3582,7 +3603,7 @@ mod tests {
                 pawn_table: chess_eval::PawnHashTable::new(),
                 network: None,
                 eval_mode: EvalMode::Classical,
-                accumulator: Accumulator::new(),
+                acc_stack: AccumulatorStack::new(),
                 lmr_enabled: false,
                 futility_enabled: true,
                 check_extension_enabled: true,
@@ -3649,7 +3670,7 @@ mod tests {
             pawn_table: chess_eval::PawnHashTable::new(),
             network: None,
             eval_mode: EvalMode::Classical,
-            accumulator: Accumulator::new(),
+            acc_stack: AccumulatorStack::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -3688,7 +3709,7 @@ mod tests {
             pawn_table: chess_eval::PawnHashTable::new(),
             network: None,
             eval_mode: EvalMode::Classical,
-            accumulator: Accumulator::new(),
+            acc_stack: AccumulatorStack::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: false,
@@ -3737,7 +3758,7 @@ mod tests {
             pawn_table: chess_eval::PawnHashTable::new(),
             network: None,
             eval_mode: EvalMode::Classical,
-            accumulator: Accumulator::new(),
+            acc_stack: AccumulatorStack::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: true,
@@ -3776,7 +3797,7 @@ mod tests {
             pawn_table: chess_eval::PawnHashTable::new(),
             network: None,
             eval_mode: EvalMode::Classical,
-            accumulator: Accumulator::new(),
+            acc_stack: AccumulatorStack::new(),
             lmr_enabled: true,
             futility_enabled: true,
             check_extension_enabled: false,
@@ -3845,7 +3866,7 @@ mod tests {
                 pawn_table: chess_eval::PawnHashTable::new(),
                 network: None,
                 eval_mode: EvalMode::Classical,
-                accumulator: Accumulator::new(),
+                acc_stack: AccumulatorStack::new(),
                 lmr_enabled: true,
                 futility_enabled: true,
                 check_extension_enabled: true,
@@ -3897,7 +3918,7 @@ mod tests {
                 pawn_table: chess_eval::PawnHashTable::new(),
                 network: None,
                 eval_mode: EvalMode::Classical,
-                accumulator: Accumulator::new(),
+                acc_stack: AccumulatorStack::new(),
                 lmr_enabled: true,
                 futility_enabled: true,
                 check_extension_enabled: false,
@@ -3980,7 +4001,7 @@ mod tests {
                 pawn_table: chess_eval::PawnHashTable::new(),
                 network: None,
                 eval_mode: EvalMode::Classical,
-                accumulator: Accumulator::new(),
+                acc_stack: AccumulatorStack::new(),
                 lmr_enabled: true,
                 futility_enabled: true,
                 check_extension_enabled: true,
@@ -4044,7 +4065,7 @@ mod tests {
                 pawn_table: chess_eval::PawnHashTable::new(),
                 network: None,
                 eval_mode: EvalMode::Classical,
-                accumulator: Accumulator::new(),
+                acc_stack: AccumulatorStack::new(),
                 lmr_enabled: true,
                 futility_enabled: true,
                 check_extension_enabled: true,
@@ -4104,7 +4125,7 @@ mod tests {
                 pawn_table: chess_eval::PawnHashTable::new(),
                 network: None,
                 eval_mode: EvalMode::Classical,
-                accumulator: Accumulator::new(),
+                acc_stack: AccumulatorStack::new(),
                 lmr_enabled: true,
                 futility_enabled: true,
                 check_extension_enabled: true,
@@ -4152,7 +4173,7 @@ mod tests {
                 pawn_table: chess_eval::PawnHashTable::new(),
                 network: None,
                 eval_mode: EvalMode::Classical,
-                accumulator: Accumulator::new(),
+                acc_stack: AccumulatorStack::new(),
                 lmr_enabled: false,
                 futility_enabled: true,
                 check_extension_enabled: true,
