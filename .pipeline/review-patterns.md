@@ -153,3 +153,4 @@ The implementation is functionally correct and complete — all 7 book module te
 - [m10/p03/t03] major: Deliverable #12 from the locked plan is missing: tools/distill/convert.rs (bullet-to-NNUE conversion module) was never created.
 - [m10/p03/t03] major: Deliverable #13 from the locked plan is missing: docs/distillation-results.md (Elo vs NPS tradeoff documentation template) was never created.
 - [m10/p03/t03] minor: Line 202: Unused import 'MAGIC' in the test module. This would cause cargo clippy --workspace -- -D warnings to fail.
+- [m11/p02/t02] Failed to parse decision output. Raw response saved for manual review.
