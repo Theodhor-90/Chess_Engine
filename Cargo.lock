@@ -50,6 +50,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "chess-nnue"
+version = "0.1.0"
+dependencies = [
+ "chess-board",
+ "chess-types",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "chess-search"
 version = "0.1.0"
 dependencies = [

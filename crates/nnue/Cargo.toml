@@ -1,0 +1,15 @@
+[package]
+name = "chess-nnue"
+version = "0.1.0"
+edition.workspace = true
+
+[features]
+default = []
+simd-avx2 = []
+simd-sse2 = []
+simd-neon = []
+
+[dependencies]
+chess-types = { path = "../types" }
+chess-board = { path = "../board" }
+thiserror = "2"

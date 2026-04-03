@@ -1,0 +1,3 @@
+All verification commands pass. Here's the summary:
+
+- **`crates/nnue/src/simd.rs`** — Fixed unreachable_code warnings when SIMD feature flags are enabled. Changed dispatch functions to use mutually exclusive `#[cfg(...)]` blocks instead of cascading early-return pattern. Each SIMD tier's cfg now includes `not(...)` guards for higher-priority tiers, and the scalar fallback uses `#[cfg(not(any(...)))]` to exclude it when any SIMD path is active. Removed all `return` statements from dispatch functions to satisfy clippy's `needless_return` lint. No changes to SIMD implementations, scalar fallbacks, or tests.
