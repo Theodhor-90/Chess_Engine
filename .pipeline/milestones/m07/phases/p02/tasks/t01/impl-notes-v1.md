@@ -1,0 +1,1 @@
+The background task completed — I already reviewed the output. The only failure is `futility_does_not_prune_in_check` in the search crate, which is a pre-existing failure documented in the known pitfalls from [m06/p03/t01], completely unrelated to this task's king safety changes. All 32 chess-eval tests pass, and all verification commands (test, clippy, fmt) pass clean.

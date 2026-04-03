@@ -6,3 +6,4 @@ edition.workspace = true
 [dependencies]
 chess-types = { path = "../types" }
 chess-board = { path = "../board" }
+chess-movegen = { path = "../movegen" }

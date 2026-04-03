@@ -1,0 +1,4 @@
+All verification commands pass. Summary:
+
+- **`crates/eval/src/mobility.rs`** (created): `evaluate_mobility(pos, color) -> (i32, i32)` with per-piece mobility counting for knights/bishops/rooks/queens, opponent pawn attack exclusion, piece-type-dependent MG/EG scaling. Private `pawn_attacks()` helper. 5 unit tests: `startpos_mobility_symmetric`, `open_position_higher_mobility_than_closed`, `opponent_pawn_attacks_excluded`, `queen_mobility_scaled_less_than_knight`, `mobility_produces_midgame_and_endgame_scores`.
+- **`crates/eval/src/lib.rs`** (modified): Added `pub mod mobility;` declaration. Integrated `mobility::evaluate_mobility()` for both colors between king safety block and tapered interpolation. Updated `tapered_eval_interpolation` test expected value from `346` to `378`.
