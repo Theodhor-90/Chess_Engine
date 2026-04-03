@@ -1,7 +1,14 @@
+pub mod killer;
+pub mod ordering;
+pub mod pv_table;
+
 use std::time::{Duration, Instant};
 
 use chess_board::Position;
 use chess_types::{Color, Move, Piece, PieceKind, Square};
+
+use killer::KillerTable;
+use pv_table::PvTable;
 
 pub const MATE_SCORE: i32 = 30000;
 pub const INFINITY: i32 = 31000;
@@ -11,6 +18,9 @@ pub struct SearchContext {
     time_budget: Duration,
     nodes: u64,
     aborted: bool,
+    killers: KillerTable,
+    pv_table: PvTable,
+    prev_pv: Vec<Move>,
 }
 
 impl SearchContext {
@@ -18,6 +28,10 @@ impl SearchContext {
         if self.start.elapsed() >= self.time_budget {
             self.aborted = true;
         }
+    }
+
+    fn pv_move_at(&self, ply: u8) -> Option<Move> {
+        self.prev_pv.get(ply as usize).copied()
     }
 }
 
@@ -56,10 +70,12 @@ pub fn quiescence(
     }
 
     let moves = chess_movegen::generate_legal_moves(pos);
-    for mv in moves
+    let mut tactical: Vec<Move> = moves
         .into_iter()
         .filter(|mv| mv.is_capture() || mv.is_promotion())
-    {
+        .collect();
+    ordering::order_moves(&mut tactical, pos, &ctx.killers, ply, None);
+    for mv in tactical {
         let undo = pos.make_move(mv);
         let score = -quiescence(pos, -beta, -alpha, ply + 1, ctx);
         pos.unmake_move(mv, undo);
@@ -99,7 +115,11 @@ pub fn negamax(
         return (quiescence(pos, alpha, beta, ply, ctx), None);
     }
 
-    let moves = chess_movegen::generate_legal_moves(pos);
+    ctx.pv_table.clear_ply(ply);
+
+    let mut moves = chess_movegen::generate_legal_moves(pos);
+    let pv_move = ctx.pv_move_at(ply);
+    ordering::order_moves(&mut moves, pos, &ctx.killers, ply, pv_move);
 
     if moves.is_empty() {
         let king_sq = king_square(pos, pos.side_to_move());
@@ -126,7 +146,11 @@ pub fn negamax(
         if score > alpha {
             alpha = score;
             best_move = Some(mv);
+            ctx.pv_table.update(ply, mv);
             if alpha >= beta {
+                if !mv.is_capture() {
+                    ctx.killers.store(ply, mv);
+                }
                 break;
             }
         }
@@ -141,6 +165,9 @@ pub fn search(pos: &mut Position, time_budget: Duration) -> Option<Move> {
         time_budget,
         nodes: 0,
         aborted: false,
+        killers: KillerTable::new(),
+        pv_table: PvTable::new(),
+        prev_pv: Vec::new(),
     };
 
     let mut best_move: Option<Move> = None;
@@ -148,6 +175,7 @@ pub fn search(pos: &mut Position, time_budget: Duration) -> Option<Move> {
 
     loop {
         ctx.aborted = false;
+        ctx.pv_table.clear();
         let (score, mv) = negamax(pos, depth, -INFINITY, INFINITY, 0, &mut ctx);
 
         if ctx.aborted {
@@ -157,6 +185,8 @@ pub fn search(pos: &mut Position, time_budget: Duration) -> Option<Move> {
         if mv.is_some() {
             best_move = mv;
         }
+
+        ctx.prev_pv = ctx.pv_table.extract_pv();
 
         if score.abs() >= MATE_SCORE - 100 {
             break;
@@ -183,6 +213,9 @@ mod tests {
             time_budget: Duration::from_secs(60),
             nodes: 0,
             aborted: false,
+            killers: KillerTable::new(),
+            pv_table: PvTable::new(),
+            prev_pv: Vec::new(),
         }
     }
 
@@ -344,5 +377,56 @@ mod tests {
         let mut ctx = test_ctx();
         negamax(&mut pos, 2, -INFINITY, INFINITY, 0, &mut ctx);
         assert!(ctx.nodes > 0);
+    }
+
+    #[test]
+    fn pv_ordering_reduces_nodes() {
+        let fen = "r1bqkbnr/pppppppp/2n5/8/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 1 2";
+        let depth: u8 = 4;
+
+        // Search with PV ordering (normal code path via iterative deepening)
+        let mut pos_pv = Position::from_fen(fen).expect("valid fen");
+        let mut ctx_pv = SearchContext {
+            start: Instant::now(),
+            time_budget: Duration::from_secs(60),
+            nodes: 0,
+            aborted: false,
+            killers: KillerTable::new(),
+            pv_table: PvTable::new(),
+            prev_pv: Vec::new(),
+        };
+        // Run iterative deepening up to target depth to build PV
+        for d in 1..=depth {
+            ctx_pv.pv_table.clear();
+            negamax(&mut pos_pv, d, -INFINITY, INFINITY, 0, &mut ctx_pv);
+            ctx_pv.prev_pv = ctx_pv.pv_table.extract_pv();
+        }
+        let nodes_with_pv = ctx_pv.nodes;
+
+        // Search without PV ordering (prev_pv always empty)
+        let mut pos_no_pv = Position::from_fen(fen).expect("valid fen");
+        let mut ctx_no_pv = SearchContext {
+            start: Instant::now(),
+            time_budget: Duration::from_secs(60),
+            nodes: 0,
+            aborted: false,
+            killers: KillerTable::new(),
+            pv_table: PvTable::new(),
+            prev_pv: Vec::new(),
+        };
+        // Run iterative deepening but never set prev_pv
+        for d in 1..=depth {
+            ctx_no_pv.pv_table.clear();
+            negamax(&mut pos_no_pv, d, -INFINITY, INFINITY, 0, &mut ctx_no_pv);
+            // Intentionally do NOT set prev_pv
+        }
+        let nodes_without_pv = ctx_no_pv.nodes;
+
+        assert!(
+            nodes_with_pv < nodes_without_pv,
+            "PV ordering should reduce nodes: {} (with PV) vs {} (without PV)",
+            nodes_with_pv,
+            nodes_without_pv
+        );
     }
 }

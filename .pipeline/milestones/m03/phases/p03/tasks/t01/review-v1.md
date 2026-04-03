@@ -1,0 +1,3 @@
+The review is complete. All verification has passed — the structured output has already been provided with an **approved** verdict.
+
+To summarize: the MVV-LVA capture ordering implementation in `crates/search/src/ordering.rs` and its integration into `crates/search/src/lib.rs` fully matches the locked plan. All 232 project tests pass, formatting and clippy checks are clean, and no security issues were found.

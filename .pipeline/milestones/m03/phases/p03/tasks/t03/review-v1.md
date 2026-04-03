@@ -1,0 +1,3 @@
+The review is complete. The structured output has already been provided with the verdict.
+
+**Summary:** The implementation is functionally correct and matches the locked plan in all respects. All 244 workspace tests pass, clippy is clean, and the PV table, move ordering integration, and iterative deepening wiring are all properly implemented. The only issue is a minor `cargo fmt` violation in `ordering.rs:31` where the `score_move` function signature needs its parameters split across multiple lines.
