@@ -5,6 +5,7 @@ use crate::arch::L1_SIZE;
 use crate::feature::feature_index;
 use crate::inference::forward;
 use crate::network::Network;
+use crate::simd;
 
 /// Stores the incrementally updatable state for hidden layer 1.
 ///
@@ -44,9 +45,7 @@ impl Accumulator {
             Color::Black => &mut self.black,
         };
         let offset = index * L1_SIZE;
-        for i in 0..L1_SIZE {
-            vals[i] += weights[offset + i];
-        }
+        simd::vec_add_i16(vals, &weights[offset..offset + L1_SIZE]);
     }
 
     /// Subtracts the weight column at `index` from the given perspective's accumulator.
@@ -59,9 +58,7 @@ impl Accumulator {
             Color::Black => &mut self.black,
         };
         let offset = index * L1_SIZE;
-        for i in 0..L1_SIZE {
-            vals[i] -= weights[offset + i];
-        }
+        simd::vec_sub_i16(vals, &weights[offset..offset + L1_SIZE]);
     }
 
     /// Initializes the accumulator from a full position.
@@ -770,5 +767,39 @@ mod tests {
         let file = bytes[0] - b'a';
         let rank = bytes[1] - b'1';
         Square::new(rank * 8 + file).expect("valid square")
+    }
+
+    #[test]
+    fn accumulator_add_remove_matches_scalar_reference() {
+        let mut net = Network::new_zeroed();
+        for (i, w) in net.input_weights.iter_mut().enumerate() {
+            *w = (i % 256) as i16 - 128;
+        }
+        *net.input_bias = [0i16; L1_SIZE];
+
+        let feature_idx = 100;
+        let mut acc = Accumulator::new();
+        acc.init_from_bias(&net.input_bias);
+
+        // Compute expected result with scalar arithmetic
+        let offset = feature_idx * L1_SIZE;
+        let mut expected_white = acc.white;
+        for i in 0..L1_SIZE {
+            expected_white[i] += net.input_weights[offset + i];
+        }
+
+        // Use the actual add_feature (which now dispatches to SIMD)
+        acc.add_feature(Color::White, feature_idx, &net.input_weights);
+        assert_eq!(
+            acc.white, expected_white,
+            "SIMD add_feature must match scalar"
+        );
+
+        // Now remove and verify we return to original
+        acc.remove_feature(Color::White, feature_idx, &net.input_weights);
+        assert_eq!(
+            acc.white, *net.input_bias,
+            "SIMD remove_feature must round-trip"
+        );
     }
 }
