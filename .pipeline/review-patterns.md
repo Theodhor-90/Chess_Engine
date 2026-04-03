@@ -21,3 +21,17 @@
 - [m05/p01/t03] The review is already complete. The structured output has been provided with the verdict `needs_revision` due to the `mate_score_correct_with_tt` test using an invalid chess position (the queen is unprotected so Black can capture it — it's not actually checkmate).
 - [m05/p02/t03] critical: Build failure: the `tt_move_ordering_across_positions` test at line 854 constructs a `SearchContext` without the `history` field. This causes `cargo test` to fail with error E0063 (missing field `history` in initializer of `SearchContext`). Add `history: Vec::new(),` to the struct literal.
 - [m05/p02/t03] critical: Missing all four required tests from the plan: (a) `threefold_repetition_returns_draw`, (b) `fifty_move_rule_returns_draw`, (c) `engine_avoids_repetition_when_winning`, (d) `engine_seeks_repetition_when_losing`. The spec and locked plan both require these tests to verify repetition detection and fifty-move rule behavior. None of them exist in the test module.
+- [m06/p01/t01] critical: Compilation error: 3 pre-existing test functions pass an extra `true` argument to `quiescence()` which only takes 5 parameters (pos, alpha, beta, ply, ctx). Lines 459, 467, and 495 call `quiescence(&mut pos, -INFINITY, INFINITY, 0, true, &mut ctx)` but should be `quiescence(&mut pos, -INFINITY, INFINITY, 0, &mut ctx)`. This prevents `cargo test` from compiling.
+- [m06/p01/t01] major: `cargo fmt --check` fails with 6 formatting diffs. Several negamax call sites in test code (lines ~627, ~782, ~1019, ~1077, ~1332, ~1574) need reformatting — the added `allow_null` parameter pushed some calls past the line length limit. Run `cargo fmt` to fix.
+- [m06/p01/t02] critical: Compilation error at line 305: `let score;` must be `let mut score;` because the variable is assigned twice in the LMR branch — once for the reduced search (line 318) and again for the re-search on fail-high (line 322).
+- [m06/p01/t02] critical: Compilation error at line 973: the `tt_move_ordering_across_positions` test initializes `SearchContext` without the new `lmr_enabled` field. Add `lmr_enabled: true,` to the struct literal.
+- [m06/p01/t02] major: All four LMR-specific tests required by the locked plan are missing: `lmr_table_values_correct`, `lmr_reduces_node_count` (spec requires >=30% node reduction benchmark at depth 10), `lmr_skips_tt_moves`, and `lmr_re_search_on_fail_high`. These are required by both the plan (Section 5) and the task spec verification criteria.
+- [m06/p01/t03] The review is complete. The structured output has already been provided with the verdict and issues. To summarize:
+
+**Verdict: needs_revision**
+
+Two issues found:
+
+1. **Major** (`crates/search/src/lib.rs`): `cargo fmt --check` fails — the reverse futility pruning `if`-condition uses multi-line formatting that `rustfmt` wants collapsed to a single line. The spec's exit criterion 8 requires `cargo fmt --check` to pass.
+
+2. **Critical** (`crates/search/src/lib.rs`): All 7 futility-specific tests from the locked plan are missing: `futility_margins_match_spec`, `reverse_futility_prunes_node`, `futility_skips_quiet_moves`, `futility_does_not_prune_in_check`, `futility_does_not_prune_captures`, `futility_preserves_wac_solve_rate`, and `futility_interacts_correctly_with_nmp_and_lmr`. The implementation logic itself is correct, but the plan explicitly requires these tests, and the spec's exit criterion 4 (WAC solve-rate validation) depends on them.

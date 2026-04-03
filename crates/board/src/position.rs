@@ -56,6 +56,12 @@ const CASTLING_RIGHTS_MASK: [u8; 64] = {
     table
 };
 
+#[derive(Clone, Copy, Debug)]
+pub struct NullMoveUndo {
+    pub en_passant: Option<Square>,
+    pub hash: u64,
+}
+
 /// State saved by `make_move` that is needed by `unmake_move` to restore the position.
 #[derive(Clone, Copy, Debug)]
 pub struct UndoInfo {
@@ -246,6 +252,37 @@ impl Position {
 
     pub fn toggle_en_passant_hash(&mut self, file: File) {
         self.hash ^= crate::zobrist::en_passant_key(file);
+    }
+
+    pub fn has_non_pawn_material(&self, color: Color) -> bool {
+        let n = self.piece_bitboard(Piece::new(color, PieceKind::Knight));
+        let b = self.piece_bitboard(Piece::new(color, PieceKind::Bishop));
+        let r = self.piece_bitboard(Piece::new(color, PieceKind::Rook));
+        let q = self.piece_bitboard(Piece::new(color, PieceKind::Queen));
+        !(n | b | r | q).is_empty()
+    }
+
+    pub fn make_null_move(&mut self) -> NullMoveUndo {
+        let undo = NullMoveUndo {
+            en_passant: self.en_passant,
+            hash: self.hash,
+        };
+
+        if let Some(ep_sq) = self.en_passant {
+            self.hash ^= crate::zobrist::en_passant_key(ep_sq.file());
+            self.en_passant = None;
+        }
+
+        self.side_to_move = self.side_to_move.opposite();
+        self.hash ^= crate::zobrist::side_to_move_key();
+
+        undo
+    }
+
+    pub fn unmake_null_move(&mut self, undo: NullMoveUndo) {
+        self.side_to_move = self.side_to_move.opposite();
+        self.en_passant = undo.en_passant;
+        self.hash = undo.hash;
     }
 
     /// Applies a move to the position, updating all state, and returns the info needed to undo it.
@@ -1614,5 +1651,104 @@ mod tests {
     fn is_square_attacked_multiple_attackers() {
         let pos = Position::from_fen("4k3/8/8/8/3QN3/8/8/4K3 w - - 0 1").unwrap();
         assert!(pos.is_square_attacked(Square::F6, Color::White));
+    }
+
+    #[test]
+    fn null_move_flips_side_to_move() {
+        let mut pos = Position::startpos();
+        assert_eq!(pos.side_to_move(), Color::White);
+        let _undo = pos.make_null_move();
+        assert_eq!(pos.side_to_move(), Color::Black);
+    }
+
+    #[test]
+    fn null_move_clears_en_passant() {
+        let mut pos =
+            Position::from_fen("rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1")
+                .unwrap();
+        assert_eq!(pos.en_passant(), Some(Square::E3));
+        let _undo = pos.make_null_move();
+        assert_eq!(pos.en_passant(), None);
+    }
+
+    #[test]
+    fn null_move_preserves_pieces() {
+        let mut pos = Position::startpos();
+        let pieces_before: Vec<Bitboard> = (0..12)
+            .map(|i| pos.piece_bitboard(Piece::from_index(i).unwrap()))
+            .collect();
+        let occ_before = pos.occupied();
+        let white_occ_before = pos.occupied_by(Color::White);
+        let black_occ_before = pos.occupied_by(Color::Black);
+
+        let _undo = pos.make_null_move();
+
+        let pieces_after: Vec<Bitboard> = (0..12)
+            .map(|i| pos.piece_bitboard(Piece::from_index(i).unwrap()))
+            .collect();
+        assert_eq!(pieces_before, pieces_after);
+        assert_eq!(occ_before, pos.occupied());
+        assert_eq!(white_occ_before, pos.occupied_by(Color::White));
+        assert_eq!(black_occ_before, pos.occupied_by(Color::Black));
+    }
+
+    #[test]
+    fn null_move_hash_consistency() {
+        let mut pos = Position::startpos();
+        let _undo = pos.make_null_move();
+        assert_hash_matches_recomputation(&pos);
+    }
+
+    #[test]
+    fn null_move_round_trip() {
+        let mut pos = Position::startpos();
+        let original_side = pos.side_to_move();
+        let original_ep = pos.en_passant();
+        let original_hash = pos.hash();
+
+        let undo = pos.make_null_move();
+        pos.unmake_null_move(undo);
+
+        assert_eq!(pos.side_to_move(), original_side);
+        assert_eq!(pos.en_passant(), original_ep);
+        assert_eq!(pos.hash(), original_hash);
+    }
+
+    #[test]
+    fn null_move_round_trip_with_en_passant() {
+        let mut pos =
+            Position::from_fen("rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1")
+                .unwrap();
+        let original_side = pos.side_to_move();
+        let original_ep = pos.en_passant();
+        let original_hash = pos.hash();
+
+        let undo = pos.make_null_move();
+        pos.unmake_null_move(undo);
+
+        assert_eq!(pos.side_to_move(), original_side);
+        assert_eq!(pos.en_passant(), original_ep);
+        assert_eq!(pos.hash(), original_hash);
+    }
+
+    #[test]
+    fn has_non_pawn_material_startpos() {
+        let pos = Position::startpos();
+        assert!(pos.has_non_pawn_material(Color::White));
+        assert!(pos.has_non_pawn_material(Color::Black));
+    }
+
+    #[test]
+    fn has_non_pawn_material_king_and_pawns_only() {
+        let pos = Position::from_fen("4k3/pppppppp/8/8/8/8/PPPPPPPP/4K3 w - - 0 1").unwrap();
+        assert!(!pos.has_non_pawn_material(Color::White));
+        assert!(!pos.has_non_pawn_material(Color::Black));
+    }
+
+    #[test]
+    fn has_non_pawn_material_single_knight() {
+        let pos = Position::from_fen("4k3/pppppppp/8/8/8/8/PPPPPPPP/N3K3 w - - 0 1").unwrap();
+        assert!(pos.has_non_pawn_material(Color::White));
+        assert!(!pos.has_non_pawn_material(Color::Black));
     }
 }
